@@ -56,6 +56,16 @@ def _cmd_extract(args) -> int:
     return 0 if res.get("ok") else 1
 
 
+def _cmd_motion_check(args) -> int:
+    argv = ["--mode", "motion-check", "--source", args.model]
+    if args.out:
+        argv += ["--out", args.out]
+    res = blender_env.run_in_blender(
+        "scripts/blender_runner.py", argv, blender=args.blender)
+    blender_env.print_json(res)
+    return 0 if res.get("ok") else 1
+
+
 def _cmd_dress(args) -> int:
     argv = ["--mode", "dress", "--source", args.source, "--target", args.target,
             "--out", args.out]
@@ -123,6 +133,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--stages", action="store_true",
                    help="render a preview after every pipeline step")
     p.set_defaults(func=_cmd_dress)
+
+    p = sub.add_parser("motion-check",
+                       help="run the high risk pose suite and measure clipping")
+    p.add_argument("--model", required=True)
+    p.add_argument("--out", default=None)
+    p.set_defaults(func=_cmd_motion_check)
 
     p = sub.add_parser("qa", help="static / motion checks on a produced model")
     p.add_argument("--model", required=True)

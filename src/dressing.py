@@ -410,26 +410,82 @@ def _count_crossings(bvh: BVHTree, origin: Vector, direction: Vector,
 
 
 def source_coverage(src_body: bpy.types.Object, garment_bvh: BVHTree,
-                    face_indices: list[int]) -> dict[int, bool]:
-    """Which source body faces sit inside the garment.
+                    face_indices: list[int], max_dist: float = 0.02,
+                    margin: int = 1) -> dict[int, bool]:
+    """Which source body vertices sit under the clothes.
 
-    The parity of the ray crossings decides it: a face under the dress is
-    inside a closed surface, a face next to a flared sleeve is not.
+    The test is per *vertex*: a source leg can be a single huge face, and a
+    per face decision would either hide the whole leg or none of it.
+
+    A vertex is covered when the clothes are close to it and lie on the
+    outside of the body - the same local reasoning the motion check uses.
+
+    `margin` erodes the covered area by that many vertex rings, so the skin
+    stays visible at the openings (collar, cuffs, hem) where the clothes do
+    not really seal.
     """
     me = src_body.data
     mw = src_body.matrix_world
-    covered = {}
+    verts = set()
     for fi in face_indices:
-        poly = me.polygons[fi]
-        center = mw @ poly.center
-        normal = (mw.to_3x3() @ poly.normal).normalized()
-        if normal.length < 1e-6:
-            covered[fi] = False
+        verts.update(me.polygons[fi].vertices)
+
+    covered: dict[int, bool] = {}
+    for i in verts:
+        v = me.vertices[i]
+        co = mw @ v.co
+        n = (mw.to_3x3() @ v.normal).normalized()
+        loc, _nrm, _idx, dist = garment_bvh.find_nearest(co)
+        if loc is None:
+            covered[i] = False
             continue
-        crossings = _count_crossings(garment_bvh, center + normal * 1e-4,
-                                      normal, 0.6)
-        covered[fi] = (crossings % 2) == 1
+        side = (loc - co).dot(n)
+        covered[i] = (dist <= max_dist and side > 0.0)
+
+    if margin > 0:
+        adj: dict[int, set[int]] = {i: set() for i in verts}
+        for e in me.edges:
+            a, b = e.vertices
+            if a in adj and b in adj:
+                adj[a].add(b)
+                adj[b].add(a)
+        for _ in range(margin):
+            covered = {i: (covered[i] and
+                           all(covered.get(n, False) for n in adj[i]))
+                       for i in verts}
     return covered
+
+
+def transfer_coverage(target_body: bpy.types.Object, src_body: bpy.types.Object,
+                      covered: dict[int, bool], max_dist: float = 0.04,
+                      z_limit: float = float("inf")) -> list[int]:
+    """Map the source coverage onto the target body; return faces to delete.
+
+    The lookup happens per vertex, so the boundary of the hidden area follows
+    the clothes instead of jumping along the source's coarse faces.
+    """
+    from mathutils.kdtree import KDTree
+
+    me = src_body.data
+    mw = src_body.matrix_world
+    kd = KDTree(len(covered))
+    for i in covered:
+        kd.insert(mw @ me.vertices[i].co, i)
+    kd.balance()
+
+    tme = target_body.data
+    tmw = target_body.matrix_world
+    delete = []
+    for poly in tme.polygons:
+        center = tmw @ poly.center
+        if center.z > z_limit:
+            continue
+        _co, index, dist = kd.find(center)
+        if index is None or dist > max_dist:
+            continue
+        if covered.get(index, False):
+            delete.append(poly.index)
+    return delete
 
 
 _CONTAIN_DIRS = (
@@ -485,33 +541,6 @@ def neck_height(armature: bpy.types.Object) -> float:
     return float("inf")
 
 
-def transfer_coverage(target_body: bpy.types.Object, src_body_bvh: BVHTree,
-                      src_coverage: dict[int, bool],
-                      src_body: bpy.types.Object,
-                      max_dist: float = 0.04,
-                      z_limit: float = float("inf")) -> list[int]:
-    """Map the source coverage onto the target body; return faces to delete."""
-    me = target_body.data
-    mw = target_body.matrix_world
-    src_me = src_body.data
-    src_face_of_poly = {fi: fi for fi in src_coverage}
-
-    delete = []
-    for poly in me.polygons:
-        center = mw @ poly.center
-        if center.z > z_limit:
-            continue
-        loc, _nrm, idx, dist = src_body_bvh.find_nearest(center)
-        if loc is None or dist > max_dist:
-            continue
-        # idx is the index of the source polygon the point landed on
-        if idx not in src_face_of_poly:
-            continue
-        if src_coverage.get(idx, False):
-            delete.append(poly.index)
-    return delete
-
-
 def delete_faces(obj: bpy.types.Object, face_indices: list[int]) -> int:
     """Remove faces from a mesh, keeping the vertex numbering intact.
 
@@ -542,14 +571,24 @@ DEFAULT_CONFIG = {
     "fit": {
         "offset": 0.005,
         "strength": 0.85,
-        "max_pull": 0.12,
+        "max_pull": 0.05,
         "max_fit_dist": 0.05,
     },
     "body_mask": {
         "enabled": True,
-        "max_dist": 0.06,
+        "max_dist": 0.08,
         "hair_max_dist": 0.04,
         "hair": True,
+        "margin": 1,
+    },
+    "motion": {
+        # Off by default on purpose: the pose suite has to evaluate and
+        # temporarily modify the rig, and that must never touch the model
+        # that gets exported.  Use `python -m src.cli motion-check` on the
+        # finished PMX instead.
+        "enabled": False,
+        "render": True,
+        "repair": True,
     },
 }
 
@@ -562,7 +601,7 @@ def _load_config(path: str | None) -> dict:
     if not p.exists():
         return cfg
     user = json.loads(p.read_text(encoding="utf-8"))
-    for key in ("fit", "body_mask"):
+    for key in ("fit", "body_mask", "motion"):
         if key in user and isinstance(user[key], dict):
             cfg[key].update(user[key])
     return cfg
@@ -678,15 +717,57 @@ def run(src_objs: list[bpy.types.Object], tgt_objs: list[bpy.types.Object],
 
     snapshot("stage3_fitted")
 
+    # ---- P2: high risk pose suite, before the body gets holes ----
+    motion_stats: dict[str, Any] = {"enabled": cfg["motion"]["enabled"]}
+    if cfg["motion"]["enabled"] and cloth:
+        from . import motion as motion_mod
+        scene_objs = list(tgt_objs) + list(cloth)
+        before = motion_mod.run_pose_suite(
+            scene_objs, None, str(out / "motion" / "before"),
+            render=cfg["motion"]["render"])
+        motion_stats["before"] = {
+            "rest_pierced": before.get("rest_pierced"),
+            "worst": before.get("worst", {}).get("pose") if before.get("worst") else None,
+            "worst_pierced": before.get("worst", {}).get("pierced") if before.get("worst") else None,
+        }
+        if cfg["motion"]["repair"] and before.get("worst"):
+            worst_pose = next((p for p in motion_mod.POSES
+                               if p["name"] == before["worst"]["pose"]), None)
+            if worst_pose is not None:
+                doomed = motion_mod.poking_body_faces(scene_objs, worst_pose)
+                removed = delete_faces(tgt_body_meshes[0], doomed)
+                motion_stats["repair"] = {
+                    "pose": worst_pose["name"],
+                    "category": worst_pose["category"],
+                    "faces_deleted": removed,
+                }
+        after = motion_mod.run_pose_suite(
+            scene_objs, None, str(out / "motion" / "after"),
+            render=cfg["motion"]["render"])
+        motion_stats["after"] = {
+            "rest_pierced": after.get("rest_pierced"),
+            "worst": after.get("worst", {}).get("pose") if after.get("worst") else None,
+            "worst_pierced": after.get("worst", {}).get("pierced") if after.get("worst") else None,
+        }
+        motion_stats["report"] = {
+            "before": before.get("report_file"),
+            "after": after.get("report_file"),
+        }
+        snapshot("stage3b_motion")
+
     # ---- P1-06: hide the covered body ----
     mask_stats = {"enabled": cfg["body_mask"]["enabled"], "deleted_faces": 0}
     if cfg["body_mask"]["enabled"] and cloth:
         garment_bvh = build_bvh(cloth[0])
-        src_skin_faces = body_faces(src_body, skip_hair=True, skip_face=True)
-        coverage = source_coverage(src_body, garment_bvh, src_skin_faces)
-        src_bvh = build_bvh(src_body, src_skin_faces)
-        to_delete = transfer_coverage(tgt_body_meshes[0], src_bvh, coverage,
-                                      src_body,
+        # the source body: everything that is neither hair, face nor the
+        # clothing itself - that is the skin the clothes may cover
+        cloth_face_set = set(cloth_faces.get(src_body.name, []))
+        src_skin_faces = [fi for fi in body_faces(src_body, skip_hair=True,
+                                                   skip_face=True)
+                          if fi not in cloth_face_set]
+        coverage = source_coverage(src_body, garment_bvh, src_skin_faces,
+                                   margin=cfg["body_mask"].get("margin", 1))
+        to_delete = transfer_coverage(tgt_body_meshes[0], src_body, coverage,
                                       max_dist=cfg["body_mask"]["max_dist"],
                                       z_limit=neck_height(tgt_arm))
         mask_stats["source_covered_faces"] = sum(1 for v in coverage.values() if v)
@@ -741,6 +822,7 @@ def run(src_objs: list[bpy.types.Object], tgt_objs: list[bpy.types.Object],
         },
         "fit": {**fit_stats, **cfg["fit"]},
         "mask": mask_stats,
+        "motion": motion_stats,
         "export": export,
     }
     (out / "manifest.json").write_text(
@@ -773,6 +855,7 @@ def run(src_objs: list[bpy.types.Object], tgt_objs: list[bpy.types.Object],
         "rig_map": manifest["rig_map"],
         "fit": manifest["fit"],
         "mask": mask_stats,
+        "motion": motion_stats,
         "reskin": reskin_stats,
         "selected_materials": selection.get("selected_materials", []),
         "stage_images": stage_images,
@@ -823,6 +906,16 @@ def _report(manifest: dict[str, Any]) -> dict[str, Any]:
     mask = manifest["mask"]
     add("body_mask", "OK" if mask.get("deleted_faces") else "WARNING",
         f"{mask.get('deleted_faces', 0)} body faces hidden")
+    motion = manifest.get("motion", {})
+    if motion.get("enabled"):
+        before = motion.get("before", {})
+        after = motion.get("after", {})
+        repair = motion.get("repair", {})
+        add("motion_poses", "OK",
+            f"worst pose {before.get('worst')}: {before.get('worst_pierced')} "
+            f"-> {after.get('worst_pierced')} body points piercing the clothes"
+            + (f"; repair removed {repair.get('faces_deleted')} body faces"
+               if repair else ""))
     export = manifest["export"]
     add("pmx_export", "OK" if export.get("pmx") else "FAILED",
         export.get("pmx") or export.get("error", ""))

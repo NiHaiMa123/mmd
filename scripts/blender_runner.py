@@ -20,6 +20,18 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 
+def _garment_materials(out_dir: str | None) -> list[str] | None:
+    """Read the selected outfit materials from a dress manifest."""
+    if not out_dir:
+        return None
+    for base in (Path(out_dir), Path(out_dir).parent):
+        manifest = base / "manifest.json"
+        if manifest.exists():
+            data = json.loads(manifest.read_text(encoding="utf-8"))
+            return data.get("selection", {}).get("selected_materials", [])
+    return None
+
+
 def _parse() -> argparse.Namespace:
     argv = sys.argv
     if "--" in argv:
@@ -120,6 +132,14 @@ def main() -> int:
             result["blend"] = str(blend)
             result["ok"] = True
 
+        elif args.mode == "motion-check":
+            from src import motion
+            ie.clear_scene()
+            objs = ie.import_pmx(args.source)
+            result.update(motion.run_pose_suite(
+                objs, _garment_materials(args.out), args.out))
+            result["ok"] = True
+
         elif args.mode == "dress":
             from src import dressing, extraction
             ie.clear_scene()
@@ -161,16 +181,9 @@ def main() -> int:
             from src import qa
             ie.clear_scene()
             objs = ie.import_pmx(args.source)
-            garment_materials = None
-            if args.out:
-                manifest = Path(args.out) / "manifest.json"
-                if manifest.exists():
-                    data = json.loads(manifest.read_text(encoding="utf-8"))
-                    garment_materials = data.get("selection", {}).get(
-                        "selected_materials", [])
             result.update(qa.run_qa(objs, motions=args.motions,
                                     out_dir=args.out,
-                                    garment_materials=garment_materials))
+                                    garment_materials=_garment_materials(args.out)))
             result["ok"] = True
 
         else:

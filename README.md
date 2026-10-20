@@ -37,11 +37,25 @@ python -m src.cli inspect --source assets/source.pmx --target assets/base.pmx
 # 拆衣预览：列出候选服装部件，生成 4 视角预览图
 python -m src.cli extract-preview --source assets/source.pmx --out outputs/preview
 
+# 只把选中的部件抽成独立服装网格（可单独检查 UV / 权重 / Morph）
+python -m src.cli extract --source assets/source.pmx --out outputs/extract01 `
+    --selection outputs/preview/selection.json
+
 # 正式换装：拆衣 → 骨架映射 → 体型适配 → 重新绑权 → 隐藏身体 → 导出
 python -m src.cli dress --source assets/source.pmx --target assets/base.pmx --out outputs/dress01
 
 # 静态 / 动作检查
-python -m src.cli qa --model outputs/dress01/model.pmx --motions assets/motions/
+python -m src.cli qa --model outputs/dress01/model.pmx --motions assets/motions/ --out outputs/dress01
+
+# 高风险姿势测试集（8 类），输出每个姿势的穿模数与截图
+python -m src.cli motion-check --model outputs/dress01/model.pmx --out outputs/dress01/poses
+```
+
+`dress` 加 `--stages` 会在每个阶段（抽出 / 重蒙皮 / 贴合 / 遮蔽）各渲染一组 4 视角图，
+用来定位是哪一步把衣服弄坏了：
+
+```powershell
+python -m src.cli dress --source ... --target ... --out outputs/dress01 --stages
 ```
 
 用系统的 `python` 即可；如果不想切目录，可以：

@@ -8,8 +8,8 @@ Two levels:
             vertices that ended up inside the body.  That is the cheapest
             honest signal for "the body pokes through the clothes".
 
-The P1 acceptance only needs the static level plus a re-import check; the
-motion level is the seed of P2.
+A PMX model is a single mesh, so after an export the clothes and the body
+share one object - the split therefore happens on *faces*, by material.
 """
 from __future__ import annotations
 
@@ -21,80 +21,153 @@ import bpy
 from mathutils import Vector
 from mathutils.bvhtree import BVHTree
 
+HAIR_WORDS = ("髪", "发", "髮", "辫", "髻", "hair", "bang")
+FACE_WORDS = ("面", "顔", "目", "眼", "眉", "睫", "口", "舌", "鼻",
+              "face", "eye", "brow", "lash", "mouth", "tongue")
+
 
 def _is_garment(obj: bpy.types.Object) -> bool:
     return bool(obj.get("mmd_garment", False))
 
 
-def split_garment(objects: list[bpy.types.Object],
-                  garment_materials: list[str] | None = None
-                  ) -> tuple[list[bpy.types.Object], list[bpy.types.Object]]:
-    """Split the meshes into garment and body.
+def _mat_name(obj: bpy.types.Object, poly) -> str:
+    me = obj.data
+    mi = poly.material_index
+    if mi < len(me.materials) and me.materials[mi]:
+        return me.materials[mi].name
+    return ""
 
-    In the live scene the garment carries a marker property.  After a PMX
-    round trip that property is gone, so the material names of the selected
-    outfit are used instead.
+
+def split_faces(objects: list[bpy.types.Object],
+                garment_materials: list[str] | None
+                ) -> dict[str, Any]:
+    """Split the model into garment faces and skin faces.
+
+    Works both on the live scene (the garment is its own object) and on a
+    re-imported PMX (one mesh, split by material).
     """
-    meshes = [o for o in objects if o.type == 'MESH']
+    from . import import_export as ie
+
+    meshes = ie.model_meshes(objects)
     marked = [o for o in meshes if _is_garment(o)]
     if marked:
-        return marked, [o for o in meshes if not _is_garment(o)]
-    if not garment_materials:
-        return [], meshes
-    wanted = set(garment_materials)
-    garment = []
-    for o in meshes:
-        names = {m.name for m in o.data.materials if m}
-        if names & wanted:
-            garment.append(o)
-    return garment, [o for o in meshes if o not in garment]
+        g = marked[0]
+        bodies = [o for o in meshes if o is not g]
+        body = bodies[0] if bodies else None
+        skin, hair = [], []
+        if body is not None:
+            for p in body.data.polygons:
+                low = _mat_name(body, p).lower()
+                if any(w in low for w in HAIR_WORDS) or \
+                        any(w in low for w in FACE_WORDS):
+                    hair.append(p.index)
+                else:
+                    skin.append(p.index)
+        return {"garment_mesh": g, "body_mesh": body,
+                "garment_faces": list(range(len(g.data.polygons))),
+                "skin_faces": skin, "hair_faces": hair}
+
+    wanted = set(garment_materials or [])
+    for m in meshes:
+        me = m.data
+        gfaces, bfaces, hairfaces = [], [], []
+        for p in me.polygons:
+            name = _mat_name(m, p)
+            if wanted and name in wanted:
+                gfaces.append(p.index)
+            else:
+                low = name.lower()
+                if any(w in low for w in HAIR_WORDS):
+                    hairfaces.append(p.index)
+                elif any(w in low for w in FACE_WORDS):
+                    hairfaces.append(p.index)
+                else:
+                    bfaces.append(p.index)
+        if gfaces:
+            return {"garment_mesh": m, "body_mesh": m,
+                    "garment_faces": gfaces,
+                    "skin_faces": bfaces, "hair_faces": hairfaces}
+    # no garment found - fall back to the whole body as skin
+    if meshes:
+        m = meshes[0]
+        return {"garment_mesh": None, "body_mesh": m, "garment_faces": [],
+                "skin_faces": list(range(len(m.data.polygons))),
+                "hair_faces": []}
+    return {"garment_mesh": None, "body_mesh": None, "garment_faces": [],
+            "skin_faces": [], "hair_faces": []}
+
+
+AUX_GROUP_PREFIXES = ("mmd_", "UV_", "_")
+
+
+def _is_aux_group(name: str) -> bool:
+    """mmd_tools helper groups: SDEF control points, UV morphs, dummy bones.
+
+    They carry weights of their own, so they must not be counted when the
+    skinning weight sum is checked.
+    """
+    return name.startswith(AUX_GROUP_PREFIXES)
 
 
 def skinning_report(objects: list[bpy.types.Object]) -> dict[str, Any]:
     """Unweighted vertices, missing bones and bad weight sums per mesh."""
+    from . import import_export as ie
+
     armatures = {a.name: {b.name for b in a.data.bones}
                  for a in objects if a.type == 'ARMATURE'}
     out = []
-    for ob in objects:
-        if ob.type != 'MESH':
-            continue
+    for ob in ie.model_meshes(objects):
         names = [vg.name for vg in ob.vertex_groups]
         unknown = [n for n in names
-                   if armatures and not any(n in s for s in armatures.values())]
+                   if not _is_aux_group(n)
+                   and armatures and not any(n in s for s in armatures.values())]
         unweighted = 0
         bad_sum = 0
+        samples = []
         for v in ob.data.vertices:
-            total = sum(g.weight for g in v.groups)
+            total = sum(g.weight for g in v.groups
+                        if not _is_aux_group(names[g.group]))
             if total <= 1e-5:
                 unweighted += 1
             elif abs(total - 1.0) > 0.02:
                 bad_sum += 1
+                if len(samples) < 5:
+                    samples.append(round(total, 5))
         out.append({
             "object": ob.name,
             "garment": _is_garment(ob),
             "vertices": len(ob.data.vertices),
             "faces": len(ob.data.polygons),
             "vertex_groups": len(names),
+            "aux_groups": sum(1 for n in names if _is_aux_group(n)),
             "unknown_bones": unknown[:20],
             "unknown_bone_count": len(unknown),
             "unweighted_vertices": unweighted,
             "bad_weight_sum_vertices": bad_sum,
+            "bad_weight_sum_samples": samples,
         })
     return {"meshes": out}
 
 
 def _evaluated_mesh(obj: bpy.types.Object):
+    """Evaluate a mesh and return (mesh, owner).
+
+    to_mesh_clear() has to be called on the *evaluated* object - doing it on
+    the original frees the mesh the depsgraph is using.
+    """
     depsgraph = bpy.context.evaluated_depsgraph_get()
-    return obj.evaluated_get(depsgraph).to_mesh(depsgraph=depsgraph,
-                                                 preserve_all_data_layers=True)
+    ev = obj.evaluated_get(depsgraph)
+    me = ev.to_mesh(depsgraph=depsgraph, preserve_all_data_layers=True)
+    return me, ev
 
 
-def _bvh_from_evaluated(obj) -> BVHTree:
-    me = _evaluated_mesh(obj)
+def _bvh(obj: bpy.types.Object, face_indices: list[int]) -> BVHTree:
+    me, oev = _evaluated_mesh(obj)
     verts = [v.co.copy() for v in me.vertices]
-    polys = [list(p.vertices) for p in me.polygons]
+    polys = [list(me.polygons[i].vertices) for i in face_indices
+             if i < len(me.polygons)]
     bvh = BVHTree.FromPolygons(verts, polys, all_triangles=False, epsilon=0.0)
-    obj.to_mesh_clear()
+    oev.to_mesh_clear()
     return bvh
 
 
@@ -117,27 +190,71 @@ def _count_crossings(bvh: BVHTree, origin: Vector, direction: Vector,
     return count
 
 
+_CHECK_DIRS = (
+    Vector((0.0, 0.0, 1.0)), Vector((0.0, 0.0, -1.0)),
+    Vector((1.0, 0.0, 0.0)), Vector((-1.0, 0.0, 0.0)),
+    Vector((0.0, 1.0, 0.0)), Vector((0.0, -1.0, 0.0)),
+)
+
+
+def _inside(bvh: BVHTree, point: Vector, max_dist: float = 3.0) -> bool:
+    """Is the point inside the (closed) body?
+
+    A single ray is not enough once the body has holes - the mask deletes the
+    covered faces, and a ray leaving through such a hole breaks the parity.
+    Voting over six directions survives that.
+    """
+    odd = 0
+    for d in _CHECK_DIRS:
+        if _count_crossings(bvh, point, d, max_dist) % 2 == 1:
+            odd += 1
+    return odd > len(_CHECK_DIRS) / 2
+
+
 def motion_check(objects: list[bpy.types.Object], motions: str | None,
                  garment_materials: list[str] | None = None,
                  frame_step: int = 15, sample_stride: int = 3,
                  max_frames: int = 24) -> dict[str, Any]:
-    """Drive the rig with a VMD and count garment vertices inside the body."""
+    """Drive the rig with a VMD and count the body points that pierce the clothes.
+
+    The parity test ("is this point inside the body") cannot be used here:
+    the body has holes where the mask removed the covered faces.  The sign
+    flip test of the motion module survives that, so the same measure is
+    used - the body points that came out through the clothes.
+    """
     if not motions:
         return {"skipped": "no motion file given"}
 
-    garment, body = split_garment(objects, garment_materials)
-    if not garment:
-        return {"skipped": "no garment object in the scene"}
-    if not body:
-        return {"skipped": "no body object in the scene"}
+    from . import motion as motion_mod
+
+    split = split_faces(objects, garment_materials)
+    gmesh = split["garment_mesh"]
+    bmesh_obj = split["body_mesh"]
+    if gmesh is None or bmesh_obj is None:
+        return {"skipped": "model has no garment/skin split"}
+    if not split["garment_faces"] or not split["skin_faces"]:
+        return {"skipped": "model has no garment/skin split"}
 
     from . import import_export as ie
     ie.ensure_mmd_tools()
 
     scene = bpy.context.scene
-    arm = next((o for o in objects if o.type == 'ARMATURE'), None)
-    if arm is None:
+    if not any(o.type == 'ARMATURE' for o in objects):
         return {"skipped": "no armature"}
+
+    # reference: in the rest pose the clothes are always outside the body
+    bme, bev = _evaluated_mesh(bmesh_obj)
+    if gmesh is bmesh_obj:
+        gme, gev = bme, bev
+    else:
+        gme, gev = _evaluated_mesh(gmesh)
+    rest_sign = motion_mod.rest_side_signs(
+        motion_mod._bvh_from(bme, split["skin_faces"]),
+        motion_mod._bvh_from(gme, split["garment_faces"]),
+        bme, split["skin_faces"])
+    bev.to_mesh_clear()
+    if gev is not bev:
+        gev.to_mesh_clear()
 
     try:
         bpy.ops.mmd_tools.import_vmd(filepath=motions, scale=0.08,
@@ -148,36 +265,32 @@ def motion_check(objects: list[bpy.types.Object], motions: str | None,
     start, end = scene.frame_start, scene.frame_end
     frames = list(range(start, end + 1, max(1, frame_step)))[:max_frames]
     results = []
-    worst = []
     for f in frames:
         scene.frame_set(f)
         bpy.context.view_layer.update()
-        body_bvh = _bvh_from_evaluated(body[0])
-        total = 0
-        checked = 0
-        for g in garment:
-            me = _evaluated_mesh(g)
-            for i in range(0, len(me.vertices), sample_stride):
-                co = me.vertices[i].co
-                crossings = _count_crossings(body_bvh, co, Vector((0.0, 0.0, 1.0)))
-                if crossings % 2 == 1:
-                    total += 1
-                checked += 1
-            g.to_mesh_clear()
-        ratio = total / max(checked, 1)
-        results.append({"frame": f, "inside": total, "checked": checked,
-                        "ratio": round(ratio, 5)})
-        worst.append((ratio, f, total))
+        bme, bev = _evaluated_mesh(bmesh_obj)
+        if gmesh is bmesh_obj:
+            gme, gev = bme, bev
+        else:
+            gme, gev = _evaluated_mesh(gmesh)
+        pierced, checked, _hits = motion_mod._pierce_count(
+            motion_mod._bvh_from(bme, split["skin_faces"]),
+            motion_mod._bvh_from(gme, split["garment_faces"]),
+            bme, split["skin_faces"], rest_sign, stride=sample_stride)
+        bev.to_mesh_clear()
+        if gev is not bev:
+            gev.to_mesh_clear()
+        results.append({"frame": f, "pierced": pierced, "checked": checked,
+                        "ratio": round(pierced / max(checked, 1), 5)})
     scene.frame_set(start)
-    worst.sort(reverse=True)
+    results.sort(key=lambda r: -r["ratio"])
     return {
         "motion": motions,
         "frame_range": [start, end],
         "sampled_frames": len(frames),
-        "per_frame": results,
-        "worst_frames": [{"frame": f, "inside": t, "ratio": round(r, 5)}
-                          for r, f, t in worst[:5]],
-        "max_ratio": round(worst[0][0], 5) if worst else 0.0,
+        "per_frame": sorted(results, key=lambda r: r["frame"]),
+        "worst_frames": results[:5],
+        "max_ratio": results[0]["ratio"] if results else 0.0,
     }
 
 
@@ -193,9 +306,8 @@ def run_qa(objects: list[bpy.types.Object], motions: str | None = None,
     report["motion"] = motion_check(objects, motions, garment_materials)
 
     items = []
-    skin = report["skinning"]
-    bad = [m for m in skin["meshes"]
-           if m["unweighted_vertices"] or m["unknown_bone_count"]]
+    skin = report["skinning"]["meshes"]
+    bad = [m for m in skin if m["unweighted_vertices"] or m["unknown_bone_count"]]
     items.append({
         "check": "skinning",
         "status": "WARNING" if bad else "OK",
@@ -205,13 +317,13 @@ def run_qa(objects: list[bpy.types.Object], motions: str | None = None,
     if "max_ratio" in motion:
         items.append({
             "check": "motion",
-            "status": "WARNING" if motion["max_ratio"] > 0.01 else "OK",
-            "detail": f"max {motion['max_ratio'] * 100:.2f}% of sampled garment "
-                      f"vertices inside the body",
+            "status": "WARNING" if motion["max_ratio"] > 0.005 else "OK",
+            "detail": f"max {motion['max_ratio'] * 100:.2f}% of sampled body "
+                      f"points pierce through the clothes",
         })
     else:
         items.append({"check": "motion", "status": "SKIPPED",
-                      "detail": motion.get("skipped", "not run")})
+                      "detail": motion.get("skipped", motion.get("error", "?"))})
     report["items"] = items
     report["status"] = ("FAILED" if any(i["status"] == "FAILED" for i in items)
                          else "OK")
