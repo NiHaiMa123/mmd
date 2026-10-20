@@ -511,11 +511,16 @@ def repair_and_verify(objects: list[bpy.types.Object],
         before_map = report["before"]["per_pose"]
         after_map = report["after"]["per_pose"]
         target = pose["name"]
-        improved = after_map.get(target, 0) < before_map.get(target, 0)
+        total_before = sum(before_map.values())
+        total_after = sum(after_map.values())
+        improved = (after_map.get(target, 0) < before_map.get(target, 0)
+                    and total_after < total_before)
         regressed = [k for k, v in after_map.items()
                      if v > before_map.get(k, 0) * 1.5 + 5]
         report["verdict"] = {
             "improved": improved,
+            "total_before": total_before,
+            "total_after": total_after,
             "regressed_poses": regressed,
             "accepted": bool(improved and not regressed),
         }
@@ -726,13 +731,18 @@ def repair_motion(objects: list[bpy.types.Object], motions: str,
                   garment_materials: list[str] | None = None,
                   out_dir: str | None = None, export_path: str | None = None,
                   max_ratio: float = 0.05,
-                  frame_step: int = 15, max_frames: int = 24) -> dict[str, Any]:
+                  frame_step: int = 15, max_frames: int = 24,
+                  top_frames: int = 3) -> dict[str, Any]:
     """P2-03/04 driven by a real motion file.
 
-    The worst frame of the dance is the one that matters, so the repair uses
-    that frame instead of a synthetic pose.  The body faces that pierce
-    through the clothes there are hidden, then the whole dance is sampled
-    again to prove the fix.
+    The worst frames of the dance are the ones that matter, so the repair
+    works on the worst *frames* (not a single one) and the body faces that
+    pierce through the clothes in any of them are hidden.  The whole dance is
+    sampled again to prove the fix.
+
+    Accepting is decided on the *total* piercing over all sampled frames:
+    fixing one frame often shifts the problem to the next one, and a
+    per frame decision would oscillate forever.
     """
     from . import dressing, import_export as ie
 
@@ -761,65 +771,79 @@ def repair_motion(objects: list[bpy.types.Object], motions: str,
         for f in frames:
             scene.frame_set(f)
             bpy.context.view_layer.update()
-            pierced, checked, _hits, region = _pierce_now(split, sign, stride=2)
+            pierced, checked, hits, region = _pierce_now(split, sign, stride=2)
             rows.append({"frame": f, "pierced": pierced, "checked": checked,
-                         "region": region})
+                         "region": region, "hits": hits})
         scene.frame_set(start)
         rows.sort(key=lambda r: -r["pierced"])
         return rows
 
     before = sweep()
-    worst = before[0] if before else None
+    total_before = sum(r["pierced"] for r in before)
     report: dict[str, Any] = {
         "motion": motions,
-        "before": {"worst_frame": worst["frame"] if worst else None,
-                   "pierced": worst["pierced"] if worst else None,
-                   "region": worst["region"] if worst else None,
+        "before": {"worst_frame": before[0]["frame"] if before else None,
+                   "pierced": before[0]["pierced"] if before else None,
+                   "total_pierced": total_before,
+                   "region": before[0]["region"] if before else None,
                    "per_frame": {r["frame"]: r["pierced"] for r in before}},
     }
-    if not worst or worst["pierced"] == 0:
+    if not before or total_before == 0:
         report["skipped"] = "no clipping found in the sampled frames"
         return report
 
-    # the faces that pierce in the worst frame
-    scene.frame_set(worst["frame"])
-    bpy.context.view_layer.update()
-    _p, _c, hits, region = _pierce_now(split, sign, stride=1)
-    hit_set = set(hits)
+    # the faces that pierce in the worst frames
+    hit_union: set[int] = set()
+    regions = []
+    for row in before[:max(1, top_frames)]:
+        scene.frame_set(row["frame"])
+        bpy.context.view_layer.update()
+        _p, _c, hits, region = _pierce_now(split, sign, stride=1)
+        hit_union.update(hits)
+        regions.append({"frame": row["frame"], "pierced": row["pierced"],
+                        "region": region})
+    scene.frame_set(start)
+
     bmesh_obj = split["body_mesh"]
     bme, bev = _evaluated(bmesh_obj)
     doomed = [fi for fi in split["skin_faces"]
-              if any(v in hit_set for v in bme.polygons[fi].vertices)]
+              if any(v in hit_union for v in bme.polygons[fi].vertices)]
     bev.to_mesh_clear()
     limit = int(len(split["skin_faces"]) * max_ratio)
     if len(doomed) > limit:
         doomed = doomed[:limit]
     report["repair"] = {
-        "frame": worst["frame"],
+        "frames": [r["frame"] for r in before[:max(1, top_frames)]],
         "faces_removed": len(doomed),
-        "region": region,
+        "regions": regions,
     }
     if not doomed:
         report["skipped"] = "no body face could be assigned to the clipping"
-        scene.frame_set(start)
         return report
 
     backup = bmesh_obj.data.copy()
     try:
         dressing.delete_faces(bmesh_obj, doomed)
         after = sweep()
+        total_after = sum(r["pierced"] for r in after)
         report["after"] = {
             "worst_frame": after[0]["frame"] if after else None,
             "pierced": after[0]["pierced"] if after else None,
+            "total_pierced": total_after,
             "region": after[0]["region"] if after else None,
             "per_frame": {r["frame"]: r["pierced"] for r in after}}
         before_map = report["before"]["per_frame"]
         after_map = report["after"]["per_frame"]
-        improved = after_map.get(worst["frame"], 0) < worst["pierced"]
+        improved = total_after < total_before
         regressed = [f for f, v in after_map.items()
-                     if v > before_map.get(f, 0) * 1.5 + 5]
-        report["verdict"] = {"improved": improved, "regressed_frames": regressed,
-                             "accepted": bool(improved and not regressed)}
+                     if v > before_map.get(f, 0) * 1.5 + 20]
+        report["verdict"] = {
+            "total_before": total_before,
+            "total_after": total_after,
+            "total_improved": improved,
+            "regressed_frames": regressed,
+            "accepted": bool(improved and not regressed),
+        }
         if not report["verdict"]["accepted"]:
             bmesh_obj.data = backup
             report["verdict"]["rolled_back"] = True

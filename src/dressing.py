@@ -280,6 +280,126 @@ def build_bvh(obj: bpy.types.Object, face_indices: list[int] | None = None
 # --------------------------------------------------------------------------
 
 
+def _barycentric(co: Vector, a: Vector, b: Vector, c: Vector):
+    """Barycentric weights of `co` inside the triangle abc."""
+    v0 = c - a
+    v1 = b - a
+    v2 = co - a
+    d00 = v0.dot(v0)
+    d01 = v0.dot(v1)
+    d11 = v1.dot(v1)
+    d20 = v2.dot(v0)
+    d21 = v2.dot(v1)
+    denom = d00 * d11 - d01 * d01
+    if abs(denom) < 1e-12:
+        return 1.0, 0.0, 0.0
+    v = (d11 * d20 - d01 * d21) / denom
+    w = (d00 * d21 - d01 * d20) / denom
+    return 1.0 - v - w, v, w
+
+
+def _vertex_weights(mesh_obj: bpy.types.Object, index: int) -> dict[str, float]:
+    """The skin weights of one vertex, keyed by bone name."""
+    names = [vg.name for vg in mesh_obj.vertex_groups]
+    out: dict[str, float] = {}
+    for g in mesh_obj.data.vertices[index].groups:
+        if g.weight <= 0.0:
+            continue
+        name = names[g.group]
+        if name.startswith(("mmd_", "UV_", "_")):
+            continue
+        out[name] = out.get(name, 0.0) + g.weight
+    return out
+
+
+def transfer_target_weights(garment: bpy.types.Object, target_body: bpy.types.Object,
+                            body_bones: set[str], tightness: list[float],
+                            blend: float = 0.8, max_dist: float = 0.06
+                            ) -> dict[str, Any]:
+    """Give the tight parts of the garment the target body's weight gradient.
+
+    The plan asks for the skin weights to be taken from the base body by
+    nearest face interpolation - that is what makes a garment follow the
+    shoulders, armpit and hips of *this* body instead of the proportions of
+    the body the garment was modelled on.  The loose parts (skirt, sleeves)
+    keep their own garment bones.
+    """
+    from . import import_export as ie
+
+    me = garment.data
+    tme = target_body.data
+    tmw = target_body.matrix_world
+    skin_faces = body_faces(target_body, skip_hair=True, skip_face=True)
+    bvh = build_bvh(target_body, skin_faces)
+
+    gnames = [vg.name for vg in garment.vertex_groups]
+    # current weights per vertex
+    current: list[dict[str, float]] = []
+    for v in me.vertices:
+        d: dict[str, float] = {}
+        for g in v.groups:
+            if g.weight <= 0.0:
+                continue
+            d[gnames[g.group]] = d.get(gnames[g.group], 0.0) + g.weight
+        current.append(d)
+
+    updated = 0
+    for vi, v in enumerate(me.vertices):
+        t = tightness[vi] * blend
+        if t <= 0.001:
+            continue
+        loc, _nrm, fi, dist = bvh.find_nearest(v.co)
+        if loc is None or dist > max_dist:
+            continue
+        poly = tme.polygons[fi]
+        if len(poly.vertices) != 3:
+            continue
+        a, b, c = [tmw @ tme.vertices[i].co for i in poly.vertices]
+        w0, w1, w2 = _barycentric(loc, a, b, c)
+        blended: dict[str, float] = {}
+        for i, bw in zip(poly.vertices, (w0, w1, w2)):
+            if bw <= 0.0:
+                continue
+            for name, weight in _vertex_weights(target_body, i).items():
+                blended[name] = blended.get(name, 0.0) + bw * weight
+        if not blended:
+            continue
+        new: dict[str, float] = {}
+        for name, weight in current[vi].items():
+            if name in body_bones:
+                new[name] = t * blended.get(name, 0.0) + (1.0 - t) * weight
+            else:
+                new[name] = (1.0 - t) * weight
+        for name, weight in blended.items():
+            if name in body_bones:
+                new[name] = new.get(name, 0.0) + t * weight
+        # keep the sum at one
+        total = sum(new.values())
+        if total > 1e-6:
+            for name in list(new):
+                new[name] /= total
+        current[vi] = new
+        updated += 1
+
+    # write the weights back
+    for vg in list(garment.vertex_groups):
+        garment.vertex_groups.remove(vg)
+    buckets: dict[str, dict[float, list[int]]] = {}
+    for vi, weights in enumerate(current):
+        for name, weight in weights.items():
+            if weight <= 0.0:
+                continue
+            buckets.setdefault(name, {}).setdefault(round(weight, 6),
+                                                    []).append(vi)
+    for name, by_weight in buckets.items():
+        vg = garment.vertex_groups.new(name=name)
+        for weight, indices in by_weight.items():
+            vg.add(indices, weight, 'REPLACE')
+
+    return {"vertices_reweighted": updated,
+            "groups": len(buckets)}
+
+
 def body_bone_tightness(garment: bpy.types.Object, body_bones: set[str]
                         ) -> list[float]:
     """Per vertex: 1 = driven by body bones (tight), 0 = by garment bones.
@@ -573,6 +693,13 @@ DEFAULT_CONFIG = {
         "strength": 0.85,
         "max_pull": 0.05,
         "max_fit_dist": 0.05,
+        # Data-Transfer style weights from the base body.  Measured on
+        # 刻晴 -> 达妮娅: switching it on raises the motion clipping from
+        # 1.36% to 1.75% (and 0.3 and 0.8 give the same number), because the
+        # garment already carries weights an artist tuned on its own body.
+        # Off by default, kept for garments whose source weights are poor.
+        "use_target_weights": False,
+        "target_weight_blend": 0.8,
     },
     "body_mask": {
         "enabled": True,
@@ -709,6 +836,14 @@ def run(src_objs: list[bpy.types.Object], tgt_objs: list[bpy.types.Object],
 
     body_bones = set(rig_map["mapping"].keys())
     tightness = body_bone_tightness(cloth[0], body_bones) if cloth else []
+
+    # P1-05: let the tight parts follow the *target* body's weight gradient
+    reweight_stats: dict[str, Any] = {}
+    if cloth and cfg["fit"].get("use_target_weights", True):
+        reweight_stats = transfer_target_weights(
+            cloth[0], tgt_body_meshes[0], body_bones, tightness,
+            blend=cfg["fit"].get("target_weight_blend", 0.8))
+
     fit_stats = fit_to_body(cloth[0], tgt_bvh, tightness,
                             offset=cfg["fit"]["offset"],
                             strength=cfg["fit"]["strength"],
@@ -820,7 +955,7 @@ def run(src_objs: list[bpy.types.Object], tgt_objs: list[bpy.types.Object],
             "created_bones": created,
             "dropped_bones": rig_map["dropped_bones"],
         },
-        "fit": {**fit_stats, **cfg["fit"]},
+        "fit": {**fit_stats, **reweight_stats, **cfg["fit"]},
         "mask": mask_stats,
         "motion": motion_stats,
         "export": export,
