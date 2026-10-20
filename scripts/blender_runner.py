@@ -61,6 +61,11 @@ def _parse() -> argparse.Namespace:
                     help="render a preview after every pipeline step")
     ap.add_argument("--repair", action="store_true",
                     help="widen the body mask where the clothes get pierced")
+    ap.add_argument("--regions", default=None,
+                    help="comma separated close-up regions: "
+                         "hands,feet,head,shoulders,sleeves,bodice,skirt")
+    ap.add_argument("--views", default=None,
+                    help="comma separated view names for the close-ups")
     return ap.parse_args(args=argv)
 
 
@@ -164,6 +169,16 @@ def main() -> int:
                     objs, materials, args.out, export_path=export))
             else:
                 result.update(motion.run_pose_suite(objs, materials, args.out))
+            result["ok"] = True
+
+        elif args.mode == "closeup":
+            from src import inspection
+            ie.clear_scene()
+            objs = ie.import_pmx(args.source)
+            regions = args.regions.split(",") if args.regions else None
+            views = args.views.split(",") if args.views else None
+            result.update(inspection.render_closeups(objs, args.out, regions,
+                                                     views))
             result["ok"] = True
 
         elif args.mode == "dress":

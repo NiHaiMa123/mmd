@@ -70,6 +70,18 @@ def _cmd_motion_check(args) -> int:
     return 0 if res.get("ok") else 1
 
 
+def _cmd_closeup(args) -> int:
+    argv = ["--mode", "closeup", "--source", args.model, "--out", args.out]
+    if args.regions:
+        argv += ["--regions", args.regions]
+    if args.views:
+        argv += ["--views", args.views]
+    res = blender_env.run_in_blender(
+        "scripts/blender_runner.py", argv, blender=args.blender)
+    blender_env.print_json(res)
+    return 0 if res.get("ok") else 1
+
+
 def _cmd_dress(args) -> int:
     argv = ["--mode", "dress", "--source", args.source, "--target", args.target,
             "--out", args.out]
@@ -126,6 +138,16 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--selection", default=None,
                    help="selection.json from extract-preview")
     p.set_defaults(func=_cmd_extract)
+
+    p = sub.add_parser("closeup",
+                       help="render every outfit part close up, from many angles")
+    p.add_argument("--model", required=True)
+    p.add_argument("--out", required=True)
+    p.add_argument("--regions", default=None,
+                   help="hands,feet,head,shoulders,sleeves,bodice,skirt")
+    p.add_argument("--views", default=None,
+                   help="front,back,left,right,top,bottom,q_left,q_right")
+    p.set_defaults(func=_cmd_closeup)
 
     p = sub.add_parser("dress", help="transfer clothing onto the fixed base body")
     p.add_argument("--source", required=True)
