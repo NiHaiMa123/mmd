@@ -49,6 +49,9 @@ python -m src.cli qa --model outputs/dress01/model.pmx --motions assets/motions/
 
 # 高风险姿势测试集（8 类），输出每个姿势的穿模数与截图
 python -m src.cli motion-check --model outputs/dress01/model.pmx --out outputs/dress01/poses
+
+# 自动修复：找出最差姿势 → 扩大身体 Mask → 重测对比 → 输出 model_repaired.pmx
+python -m src.cli motion-check --model outputs/dress01/model.pmx --out outputs/dress01/repair --repair
 ```
 
 `dress` 加 `--stages` 会在每个阶段（抽出 / 重蒙皮 / 贴合 / 遮蔽）各渲染一组 4 视角图，
@@ -134,6 +137,10 @@ p' = Σ w_i · D(bone_i) · p
 而且衣服是单面壳，也没有内外之分。实际用的是：静置姿态下衣服永远在身体外侧，
 记下这个方向；动作里如果身体顶点相对衣服法线的方向翻转了、而且衣服就在 6 mm 以内，
 才算真的穿出。静置姿态下这个判据 0 误报。
+
+**自动修复**。穿模的修法就是「把露出来的身体再遮掉」：取最差姿势，把该姿势下穿出的
+身体面删掉（扩大 Mask），再跑一遍全部姿势对比。没变好或者别的姿势明显变差就整体回滚。
+报告会写清问题出在哪个身体区域（按高度分带统计穿出点数量），并给出修复前后的对比图。
 
 ## 目录结构
 

@@ -51,6 +51,8 @@ def _parse() -> argparse.Namespace:
     ap.add_argument("--keep-scene", action="store_true")
     ap.add_argument("--stages", action="store_true",
                     help="render a preview after every pipeline step")
+    ap.add_argument("--repair", action="store_true",
+                    help="widen the body mask where the clothes get pierced")
     return ap.parse_args(args=argv)
 
 
@@ -136,8 +138,13 @@ def main() -> int:
             from src import motion
             ie.clear_scene()
             objs = ie.import_pmx(args.source)
-            result.update(motion.run_pose_suite(
-                objs, _garment_materials(args.out), args.out))
+            materials = _garment_materials(args.out)
+            if args.repair:
+                export = str(Path(args.out) / "model_repaired.pmx") if args.out else None
+                result.update(motion.repair_and_verify(
+                    objs, materials, args.out, export_path=export))
+            else:
+                result.update(motion.run_pose_suite(objs, materials, args.out))
             result["ok"] = True
 
         elif args.mode == "dress":

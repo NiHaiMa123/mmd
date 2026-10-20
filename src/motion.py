@@ -442,14 +442,112 @@ def run_pose_suite(objects: list[bpy.types.Object],
     return report
 
 
+def repair_and_verify(objects: list[bpy.types.Object],
+                      garment_materials: list[str] | None = None,
+                      out_dir: str | None = None,
+                      export_path: str | None = None,
+                      max_ratio: float = 0.05) -> dict[str, Any]:
+    """P2-03/04: find the worst pose, widen the body mask, re-measure.
+
+    The fix for "the body shows through the clothes" is to hide a bit more of
+    the body, so the repair removes exactly the body faces that pierced in
+    the worst pose.  If the result is not better - or if another pose got
+    noticeably worse - the change is rolled back.
+    """
+    from . import import_export as ie, qa
+
+    out = Path(out_dir) if out_dir else None
+    if out:
+        out.mkdir(parents=True, exist_ok=True)
+
+    before = run_pose_suite(objects, garment_materials, str(out / "before")
+                            if out else None, render=True)
+    worst = before.get("worst")
+    report: dict[str, Any] = {
+        "before": {"worst": worst.get("pose") if worst else None,
+                   "pierced": worst.get("pierced") if worst else None,
+                   "per_pose": {p["pose"]: p["pierced"]
+                                for p in before.get("poses", [])}},
+    }
+    if not worst:
+        report["skipped"] = "no pose produced a clipping signal"
+        return report
+
+    pose = next((p for p in POSES if p["name"] == worst["pose"]), None)
+    if pose is None:
+        report["skipped"] = "worst pose not found in the pose list"
+        return report
+
+    doomed, region = poking_body_faces(objects, pose, garment_materials,
+                                       max_ratio=max_ratio)
+    report["repair"] = {
+        "pose": pose["name"],
+        "category": pose["category"],
+        "watch": pose["watch"],
+        "faces_removed": len(doomed),
+        "region": region,
+    }
+    if not doomed:
+        report["skipped"] = "no body face could be assigned to the clipping"
+        return report
+
+    split = qa.split_faces(objects, garment_materials)
+    body = split["body_mesh"]
+    arm = next((o for o in objects if o.type == 'ARMATURE'), None)
+    state = capture_pose(arm) if arm else None
+    backup = body.data.copy()
+    try:
+        from . import dressing
+        dressing.delete_faces(body, doomed)
+
+        after = run_pose_suite(objects, garment_materials, str(out / "after")
+                               if out else None, render=True)
+        report["after"] = {"worst": after.get("worst", {}).get("pose")
+                           if after.get("worst") else None,
+                           "pierced": after.get("worst", {}).get("pierced")
+                           if after.get("worst") else None,
+                           "per_pose": {p["pose"]: p["pierced"]
+                                        for p in after.get("poses", [])}}
+        before_map = report["before"]["per_pose"]
+        after_map = report["after"]["per_pose"]
+        target = pose["name"]
+        improved = after_map.get(target, 0) < before_map.get(target, 0)
+        regressed = [k for k, v in after_map.items()
+                     if v > before_map.get(k, 0) * 1.5 + 5]
+        report["verdict"] = {
+            "improved": improved,
+            "regressed_poses": regressed,
+            "accepted": bool(improved and not regressed),
+        }
+        if not report["verdict"]["accepted"]:
+            body.data = backup
+            report["verdict"]["rolled_back"] = True
+        else:
+            if export_path:
+                ie.export_pmx(export_path, list(objects))
+                report["repaired_model"] = export_path
+    finally:
+        reset_pose(next((o for o in objects if o.type == 'ARMATURE'),
+                         None) or objects[0]) if objects else None
+
+    if out:
+        (out / "repair_report.json").write_text(
+            json.dumps(report, ensure_ascii=False, indent=1), encoding="utf-8")
+        report["report_file"] = str(out / "repair_report.json")
+    return report
+
+
 def poking_body_faces(objects: list[bpy.types.Object], pose: dict[str, Any],
                       garment_materials: list[str] | None = None,
-                      max_ratio: float = 0.05) -> list[int]:
+                      max_ratio: float = 0.05) -> tuple[list[int], dict[str, Any]]:
     """Body faces that came out through the clothes in one pose.
 
     Uses the same sign-flip test as the metric, so the repair targets exactly
     the places the detection complained about.  The ratio cap keeps a bad
     pose from gutting the whole body.
+
+    Returns the face list plus a description of *where* the problem is, so
+    the report can point at a body region instead of just a number.
     """
     from . import qa
 
@@ -457,10 +555,10 @@ def poking_body_faces(objects: list[bpy.types.Object], pose: dict[str, Any],
     gmesh = split["garment_mesh"]
     bmesh_obj = split["body_mesh"]
     if gmesh is None or bmesh_obj is None:
-        return []
+        return [], {}
     arm = next((o for o in objects if o.type == 'ARMATURE'), None)
     if arm is None:
-        return []
+        return [], {}
 
     state = capture_pose(arm)
     reset_pose(arm, state)
@@ -493,6 +591,36 @@ def poking_body_faces(objects: list[bpy.types.Object], pose: dict[str, Any],
     for fi in split["skin_faces"]:
         if any(v in hit_set for v in bme.polygons[fi].vertices):
             doomed.append(fi)
+
+    # where is it?  group the pierced points by height band
+    mw = bmesh_obj.matrix_world
+    bands: dict[str, int] = {}
+    zs = []
+    for i in hit_set:
+        if i >= len(bme.vertices):
+            continue
+        z = (mw @ bme.vertices[i].co).z
+        zs.append(z)
+        if z < 0.45:
+            key = "小腿"
+        elif z < 0.75:
+            key = "大腿/膝"
+        elif z < 1.0:
+            key = "腰胯"
+        elif z < 1.2:
+            key = "胸腹"
+        elif z < 1.35:
+            key = "肩颈"
+        else:
+            key = "头面"
+        bands[key] = bands.get(key, 0) + 1
+    region = {
+        "points": len(hit_set),
+        "z_range": [round(min(zs), 3), round(max(zs), 3)] if zs else None,
+        "bands": bands,
+        "worst_band": max(bands, key=bands.get) if bands else None,
+    }
+
     bev.to_mesh_clear()
     if gev is not bev:
         gev.to_mesh_clear()
@@ -501,4 +629,4 @@ def poking_body_faces(objects: list[bpy.types.Object], pose: dict[str, Any],
     limit = int(len(split["skin_faces"]) * max_ratio)
     if len(doomed) > limit:
         doomed = doomed[:limit]
-    return doomed
+    return doomed, region
