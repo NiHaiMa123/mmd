@@ -21,6 +21,13 @@ def load(path: Path):
         return None
 
 
+def newest(out: Path, pattern: str) -> Path | None:
+    """The most recently written artifact of a kind (repair rounds pile up)."""
+    hits = sorted(out.glob(pattern),
+                  key=lambda p: p.stat().st_mtime, reverse=True)
+    return hits[0] if hits else None
+
+
 def main(argv: list[str]) -> int:
     if len(argv) < 2:
         print("usage: p2_acceptance.py <output-dir>")
@@ -31,7 +38,8 @@ def main(argv: list[str]) -> int:
     qa = load(out / "qa_report.json")
     poses = load(out / "poses" / "motion_report.json")
     repair = load(out / "repair" / "repair_report.json")
-    mrepair = load(out / "repair_motion" / "motion_repair_report.json")
+    motion_path = newest(out, "**/motion_repair_report.json")
+    mrepair = load(motion_path) if motion_path else None
 
     items = []
 
@@ -70,12 +78,21 @@ def main(argv: list[str]) -> int:
         rep = mrepair.get("repair", {})
         verdict = mrepair.get("verdict", {})
         band = ((rep.get("region") or {}).get("worst_band"))
-        add("P2-03/04 动作驱动修复", "OK" if verdict.get("accepted") else "WARNING",
-            f"最差帧 {rep.get('frame')}，删 {rep.get('faces_removed')} 面，"
-            f"区域 {band}；改进={verdict.get('improved')} "
-            f"回滚={verdict.get('rolled_back', False)}"
-            + (f" 回归帧 {verdict.get('regressed_frames')}"
-               if verdict.get("regressed_frames") else ""))
+        detail = (f"最差帧 {rep.get('worst_frame') or rep.get('frame')}，"
+                  f"删 {rep.get('faces_removed')} 面")
+        if rep.get("frames"):
+            detail = f"最差帧 {rep['frames']}，删 {rep.get('faces_removed')} 面"
+        if "total_before" in verdict:
+            detail += (f"；总穿出 {verdict['total_before']} → "
+                       f"{verdict['total_after']}")
+        if band:
+            detail += f"；区域 {band}"
+        detail += (f"；改进={verdict.get('total_improved', verdict.get('improved'))} "
+                   f"回滚={verdict.get('rolled_back', False)}")
+        if verdict.get("regressed_frames"):
+            detail += f" 回归帧 {verdict['regressed_frames']}"
+        add("P2-03/04 动作驱动修复",
+            "OK" if verdict.get("accepted") else "WARNING", detail)
     if not repair and not mrepair:
         add("P2-03/04 自动修复", "SKIPPED", "没有找到修复报告")
 
@@ -95,8 +112,7 @@ def main(argv: list[str]) -> int:
             "qa": str(out / "qa_report.json") if qa else None,
             "poses": str(out / "poses" / "motion_report.json") if poses else None,
             "pose_repair": str(out / "repair" / "repair_report.json") if repair else None,
-            "motion_repair": (str(out / "repair_motion" / "motion_repair_report.json")
-                              if mrepair else None),
+            "motion_repair": str(motion_path) if motion_path else None,
         },
     }
     (out / "p2_report.json").write_text(
