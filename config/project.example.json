@@ -12,21 +12,27 @@
   },
 
   "fit": {
-    "_comment": "体型适配参数，1.0 = 保持来源设计",
-    "global_scale": 1.0,
-    "shoulder_offset": 0.0,
-    "waist_offset": 0.0,
-    "hip_offset": 0.0,
-    "sleeve_length": 1.0,
-    "tight_offset": 0.004,
-    "loose_keep": 1.0
+    "_comment": "体型适配参数。offset = 贴身处离目标身体的距离，strength = 贴合力度，max_fit_dist = 超过这个距离就不当作贴身区",
+    "offset": 0.005,
+    "strength": 0.85,
+    "max_pull": 0.05,
+    "max_fit_dist": 0.05
   },
 
   "body_mask": {
-    "_comment": "被服装遮挡的身体处理",
+    "_comment": "被服装遮挡的身体处理。margin = 腐蚀圈数，领口/袖口/下沿会保留一圈皮肤",
     "enabled": true,
-    "margin": 0.006,
-    "keep_openings": true
+    "max_dist": 0.08,
+    "margin": 1,
+    "hair": true,
+    "hair_max_dist": 0.04
+  },
+
+  "motion": {
+    "_comment": "高风险姿势检测。默认关闭 —— 它会临时改姿态，不要跑在要导出的模型上，用 motion-check 命令跑在成品上",
+    "enabled": false,
+    "render": true,
+    "repair": true
   },
 
   "export": {
