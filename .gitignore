@@ -1,0 +1,13 @@
+# 本地资产（第三方模型，不提交）
+assets/*
+!assets/README.md
+
+# 运行产物
+outputs/
+*.blend1
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/

@@ -1,0 +1,112 @@
+"""Command line interface (runs OUTSIDE Blender).
+
+    python -m src.cli inspect   --source assets/source.pmx --target assets/base.pmx
+    python -m src.cli roundtrip  --source assets/source.pmx --out outputs/roundtrip
+    python -m src.cli extract-preview --source assets/source.pmx --out outputs/preview
+    python -m src.cli dress      --source assets/source.pmx --target assets/base.pmx --out outputs/dress01
+    python -m src.cli qa         --model outputs/dress01/model.pmx --motions assets/motions/
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+from . import blender_env
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+
+
+def _cmd_inspect(args) -> int:
+    argv = ["--mode", "inspect", "--source", args.source]
+    if args.target:
+        argv += ["--target", args.target]
+    res = blender_env.run_in_blender(
+        "scripts/blender_runner.py", argv, blender=args.blender)
+    blender_env.print_json(res)
+    return 0 if res.get("ok") else 1
+
+
+def _cmd_roundtrip(args) -> int:
+    res = blender_env.run_in_blender(
+        "scripts/blender_runner.py",
+        ["--mode", "roundtrip", "--source", args.source, "--out", args.out],
+        blender=args.blender)
+    blender_env.print_json(res)
+    return 0 if res.get("ok") else 1
+
+
+def _cmd_extract_preview(args) -> int:
+    res = blender_env.run_in_blender(
+        "scripts/blender_runner.py",
+        ["--mode", "extract-preview", "--source", args.source, "--out", args.out],
+        blender=args.blender)
+    blender_env.print_json(res)
+    return 0 if res.get("ok") else 1
+
+
+def _cmd_dress(args) -> int:
+    res = blender_env.run_in_blender(
+        "scripts/blender_runner.py",
+        ["--mode", "dress", "--source", args.source, "--target", args.target,
+         "--out", args.out, "--config", args.config],
+        blender=args.blender)
+    blender_env.print_json(res)
+    return 0 if res.get("ok") else 1
+
+
+def _cmd_qa(args) -> int:
+    res = blender_env.run_in_blender(
+        "scripts/blender_runner.py",
+        ["--mode", "qa", "--source", args.model, "--motions", args.motions],
+        blender=args.blender)
+    blender_env.print_json(res)
+    return 0 if res.get("ok") else 1
+
+
+def build_parser() -> argparse.ArgumentParser:
+    ap = argparse.ArgumentParser(prog="src.cli",
+                                 description="MMD clothing transfer toolkit")
+    ap.add_argument("--blender", default=None,
+                    help="path to blender.exe (default: auto-detect)")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+
+    p = sub.add_parser("inspect", help="import and report model inventory")
+    p.add_argument("--source", required=True)
+    p.add_argument("--target", default=None)
+    p.set_defaults(func=_cmd_inspect)
+
+    p = sub.add_parser("roundtrip", help="import -> export -> re-import check")
+    p.add_argument("--source", required=True)
+    p.add_argument("--out", default=str(REPO_ROOT / "outputs" / "roundtrip"))
+    p.set_defaults(func=_cmd_roundtrip)
+
+    p = sub.add_parser("extract-preview",
+                       help="list clothing candidates + render a preview")
+    p.add_argument("--source", required=True)
+    p.add_argument("--out", default=str(REPO_ROOT / "outputs" / "preview"))
+    p.set_defaults(func=_cmd_extract_preview)
+
+    p = sub.add_parser("dress", help="transfer clothing onto the fixed base body")
+    p.add_argument("--source", required=True)
+    p.add_argument("--target", required=True)
+    p.add_argument("--out", default=str(REPO_ROOT / "outputs" / "dress01"))
+    p.add_argument("--config", default=None)
+    p.set_defaults(func=_cmd_dress)
+
+    p = sub.add_parser("qa", help="static / motion checks on a produced model")
+    p.add_argument("--model", required=True)
+    p.add_argument("--motions", default=None)
+    p.set_defaults(func=_cmd_qa)
+    return ap
+
+
+def main(argv=None) -> int:
+    ap = build_parser()
+    args = ap.parse_args(argv)
+    return args.func(args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

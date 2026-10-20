@@ -1,0 +1,36 @@
+{
+  "_comment": "示例配置。CLI 传参优先于本文件；本文件用于固定一套换装工程参数。",
+
+  "source": "assets/source.pmx",
+  "target": "assets/base.pmx",
+  "output": "outputs/dress01",
+
+  "selection": {
+    "_comment": "来自 extract-preview 产生的 part id 列表；留空表示自动采用高置信候选",
+    "parts": [],
+    "materials": []
+  },
+
+  "fit": {
+    "_comment": "体型适配参数，1.0 = 保持来源设计",
+    "global_scale": 1.0,
+    "shoulder_offset": 0.0,
+    "waist_offset": 0.0,
+    "hip_offset": 0.0,
+    "sleeve_length": 1.0,
+    "tight_offset": 0.004,
+    "loose_keep": 1.0
+  },
+
+  "body_mask": {
+    "_comment": "被服装遮挡的身体处理",
+    "enabled": true,
+    "margin": 0.006,
+    "keep_openings": true
+  },
+
+  "export": {
+    "copy_textures": true,
+    "save_blend": true
+  }
+}
