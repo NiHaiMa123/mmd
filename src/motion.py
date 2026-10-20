@@ -592,7 +592,25 @@ def poking_body_faces(objects: list[bpy.types.Object], pose: dict[str, Any],
         if any(v in hit_set for v in bme.polygons[fi].vertices):
             doomed.append(fi)
 
-    # where is it?  group the pierced points by height band
+    region = region_of(bmesh_obj, bme, hit_set)
+
+    bev.to_mesh_clear()
+    if gev is not bev:
+        gev.to_mesh_clear()
+    reset_pose(arm, state)
+
+    limit = int(len(split["skin_faces"]) * max_ratio)
+    if len(doomed) > limit:
+        doomed = doomed[:limit]
+    return doomed, region
+
+
+def region_of(bmesh_obj: bpy.types.Object, bme, hit_set) -> dict[str, Any]:
+    """Describe *where* on the body the clipping happens.
+
+    The plan wants the report to name a body region, not just a number, so
+    the pierced points are grouped into height bands.
+    """
     mw = bmesh_obj.matrix_world
     bands: dict[str, int] = {}
     zs = []
@@ -614,19 +632,205 @@ def poking_body_faces(objects: list[bpy.types.Object], pose: dict[str, Any],
         else:
             key = "头面"
         bands[key] = bands.get(key, 0) + 1
-    region = {
+    return {
         "points": len(hit_set),
         "z_range": [round(min(zs), 3), round(max(zs), 3)] if zs else None,
         "bands": bands,
         "worst_band": max(bands, key=bands.get) if bands else None,
     }
 
+
+# --------------------------------------------------------------------------
+# Real motion (VMD) driven check and repair
+# --------------------------------------------------------------------------
+
+
+def _rest_reference(objects, garment_materials):
+    """The rest-pose relation between body and clothes.
+
+    It has to be captured before a VMD is imported - after the import the
+    frame range and the current frame are no longer the rest pose.
+    """
+    from . import qa
+
+    split = qa.split_faces(objects, garment_materials)
+    gmesh = split["garment_mesh"]
+    bmesh_obj = split["body_mesh"]
+    if gmesh is None or bmesh_obj is None:
+        return None
+    bme, bev = _evaluated(bmesh_obj)
+    gme, gev = (bme, bev) if gmesh is bmesh_obj else _evaluated(gmesh)
+    sign = rest_side_signs(_bvh_from(bme, split["skin_faces"]),
+                            _bvh_from(gme, split["garment_faces"]),
+                            bme, split["skin_faces"])
     bev.to_mesh_clear()
     if gev is not bev:
         gev.to_mesh_clear()
-    reset_pose(arm, state)
+    return split, sign
 
+
+def _pierce_now(split, sign, stride: int = 1):
+    """Clipping of the current frame."""
+    bmesh_obj = split["body_mesh"]
+    gmesh = split["garment_mesh"]
+    bme, bev = _evaluated(bmesh_obj)
+    gme, gev = (bme, bev) if gmesh is bmesh_obj else _evaluated(gmesh)
+    pierced, checked, hits = _pierce_count(
+        _bvh_from(bme, split["skin_faces"]),
+        _bvh_from(gme, split["garment_faces"]),
+        bme, split["skin_faces"], sign, stride=stride)
+    region = region_of(bmesh_obj, bme, hits)
+    bev.to_mesh_clear()
+    if gev is not bev:
+        gev.to_mesh_clear()
+    return pierced, checked, hits, region
+
+
+def sample_motion(objects: list[bpy.types.Object], motions: str,
+                  garment_materials: list[str] | None = None,
+                  frame_step: int = 15, max_frames: int = 24) -> dict[str, Any]:
+    """Import a VMD and measure the clipping over the sampled frames."""
+    from . import import_export as ie
+
+    ref = _rest_reference(objects, garment_materials)
+    if ref is None:
+        return {"skipped": "no garment/skin split"}
+    split, sign = ref
+
+    ie.ensure_mmd_tools()
+    scene = bpy.context.scene
+    try:
+        bpy.ops.mmd_tools.import_vmd(filepath=motions, scale=0.08,
+                                     rename_bones=True, log_level='ERROR')
+    except Exception as exc:                        # noqa: BLE001
+        return {"error": f"vmd import failed: {type(exc).__name__}: {exc}"}
+
+    start, end = scene.frame_start, scene.frame_end
+    frames = list(range(start, end + 1, max(1, frame_step)))[:max_frames]
+    results = []
+    for f in frames:
+        scene.frame_set(f)
+        bpy.context.view_layer.update()
+        pierced, checked, _hits, region = _pierce_now(split, sign, stride=2)
+        results.append({"frame": f, "pierced": pierced, "checked": checked,
+                        "region": region})
+    scene.frame_set(start)
+    results.sort(key=lambda r: -r["pierced"])
+    return {"motion": motions, "frame_range": [start, end],
+            "sampled_frames": len(frames),
+            "per_frame": sorted(results, key=lambda r: r["frame"]),
+            "worst_frames": results[:5]}
+
+
+def repair_motion(objects: list[bpy.types.Object], motions: str,
+                  garment_materials: list[str] | None = None,
+                  out_dir: str | None = None, export_path: str | None = None,
+                  max_ratio: float = 0.05,
+                  frame_step: int = 15, max_frames: int = 24) -> dict[str, Any]:
+    """P2-03/04 driven by a real motion file.
+
+    The worst frame of the dance is the one that matters, so the repair uses
+    that frame instead of a synthetic pose.  The body faces that pierce
+    through the clothes there are hidden, then the whole dance is sampled
+    again to prove the fix.
+    """
+    from . import dressing, import_export as ie
+
+    out = Path(out_dir) if out_dir else None
+    if out:
+        out.mkdir(parents=True, exist_ok=True)
+
+    ref = _rest_reference(objects, garment_materials)
+    if ref is None:
+        return {"skipped": "no garment/skin split"}
+    split, sign = ref
+
+    ie.ensure_mmd_tools()
+    scene = bpy.context.scene
+    try:
+        bpy.ops.mmd_tools.import_vmd(filepath=motions, scale=0.08,
+                                     rename_bones=True, log_level='ERROR')
+    except Exception as exc:                        # noqa: BLE001
+        return {"error": f"vmd import failed: {type(exc).__name__}: {exc}"}
+
+    start, end = scene.frame_start, scene.frame_end
+    frames = list(range(start, end + 1, max(1, frame_step)))[:max_frames]
+
+    def sweep():
+        rows = []
+        for f in frames:
+            scene.frame_set(f)
+            bpy.context.view_layer.update()
+            pierced, checked, _hits, region = _pierce_now(split, sign, stride=2)
+            rows.append({"frame": f, "pierced": pierced, "checked": checked,
+                         "region": region})
+        scene.frame_set(start)
+        rows.sort(key=lambda r: -r["pierced"])
+        return rows
+
+    before = sweep()
+    worst = before[0] if before else None
+    report: dict[str, Any] = {
+        "motion": motions,
+        "before": {"worst_frame": worst["frame"] if worst else None,
+                   "pierced": worst["pierced"] if worst else None,
+                   "region": worst["region"] if worst else None,
+                   "per_frame": {r["frame"]: r["pierced"] for r in before}},
+    }
+    if not worst or worst["pierced"] == 0:
+        report["skipped"] = "no clipping found in the sampled frames"
+        return report
+
+    # the faces that pierce in the worst frame
+    scene.frame_set(worst["frame"])
+    bpy.context.view_layer.update()
+    _p, _c, hits, region = _pierce_now(split, sign, stride=1)
+    hit_set = set(hits)
+    bmesh_obj = split["body_mesh"]
+    bme, bev = _evaluated(bmesh_obj)
+    doomed = [fi for fi in split["skin_faces"]
+              if any(v in hit_set for v in bme.polygons[fi].vertices)]
+    bev.to_mesh_clear()
     limit = int(len(split["skin_faces"]) * max_ratio)
     if len(doomed) > limit:
         doomed = doomed[:limit]
-    return doomed, region
+    report["repair"] = {
+        "frame": worst["frame"],
+        "faces_removed": len(doomed),
+        "region": region,
+    }
+    if not doomed:
+        report["skipped"] = "no body face could be assigned to the clipping"
+        scene.frame_set(start)
+        return report
+
+    backup = bmesh_obj.data.copy()
+    try:
+        dressing.delete_faces(bmesh_obj, doomed)
+        after = sweep()
+        report["after"] = {
+            "worst_frame": after[0]["frame"] if after else None,
+            "pierced": after[0]["pierced"] if after else None,
+            "region": after[0]["region"] if after else None,
+            "per_frame": {r["frame"]: r["pierced"] for r in after}}
+        before_map = report["before"]["per_frame"]
+        after_map = report["after"]["per_frame"]
+        improved = after_map.get(worst["frame"], 0) < worst["pierced"]
+        regressed = [f for f, v in after_map.items()
+                     if v > before_map.get(f, 0) * 1.5 + 5]
+        report["verdict"] = {"improved": improved, "regressed_frames": regressed,
+                             "accepted": bool(improved and not regressed)}
+        if not report["verdict"]["accepted"]:
+            bmesh_obj.data = backup
+            report["verdict"]["rolled_back"] = True
+        elif export_path:
+            ie.export_pmx(export_path, list(objects))
+            report["repaired_model"] = export_path
+    finally:
+        scene.frame_set(start)
+
+    if out:
+        (out / "motion_repair_report.json").write_text(
+            json.dumps(report, ensure_ascii=False, indent=1), encoding="utf-8")
+        report["report_file"] = str(out / "motion_repair_report.json")
+    return report

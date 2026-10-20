@@ -21,14 +21,22 @@ if str(REPO_ROOT) not in sys.path:
 
 
 def _garment_materials(out_dir: str | None) -> list[str] | None:
-    """Read the selected outfit materials from a dress manifest."""
+    """Read the selected outfit materials from a dress manifest.
+
+    The manifest lives in the dress output directory, but the motion check
+    usually writes into a sub directory of it, so look a few levels up.
+    """
     if not out_dir:
         return None
-    for base in (Path(out_dir), Path(out_dir).parent):
+    base = Path(out_dir).resolve()
+    for _ in range(4):
         manifest = base / "manifest.json"
         if manifest.exists():
             data = json.loads(manifest.read_text(encoding="utf-8"))
             return data.get("selection", {}).get("selected_materials", [])
+        if base.parent == base:
+            break
+        base = base.parent
     return None
 
 
@@ -139,8 +147,19 @@ def main() -> int:
             ie.clear_scene()
             objs = ie.import_pmx(args.source)
             materials = _garment_materials(args.out)
-            if args.repair:
-                export = str(Path(args.out) / "model_repaired.pmx") if args.out else None
+            if args.motions:
+                if args.repair:
+                    export = (str(Path(args.out) / "model_repaired.pmx")
+                              if args.out else None)
+                    result.update(motion.repair_motion(
+                        objs, args.motions, materials, args.out,
+                        export_path=export))
+                else:
+                    result.update(motion.sample_motion(objs, args.motions,
+                                                      materials))
+            elif args.repair:
+                export = (str(Path(args.out) / "model_repaired.pmx")
+                          if args.out else None)
                 result.update(motion.repair_and_verify(
                     objs, materials, args.out, export_path=export))
             else:

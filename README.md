@@ -52,6 +52,15 @@ python -m src.cli motion-check --model outputs/dress01/model.pmx --out outputs/d
 
 # 自动修复：找出最差姿势 → 扩大身体 Mask → 重测对比 → 输出 model_repaired.pmx
 python -m src.cli motion-check --model outputs/dress01/model.pmx --out outputs/dress01/repair --repair
+
+# 同上，但用真实 VMD 的最差帧来定位问题（裙子甩动这类只有真实动作才暴露）
+python -m src.cli motion-check --model outputs/dress01/model.pmx --motions assets/motions/x.vmd --out outputs/dress01/repair_motion --repair
+```
+
+跑完可以把检测和修复的产物汇总成一份验收报告：
+
+```powershell
+python scripts/p2_acceptance.py outputs/dress01
 ```
 
 `dress` 加 `--stages` 会在每个阶段（抽出 / 重蒙皮 / 贴合 / 遮蔽）各渲染一组 4 视角图，
@@ -138,9 +147,9 @@ p' = Σ w_i · D(bone_i) · p
 记下这个方向；动作里如果身体顶点相对衣服法线的方向翻转了、而且衣服就在 6 mm 以内，
 才算真的穿出。静置姿态下这个判据 0 误报。
 
-**自动修复**。穿模的修法就是「把露出来的身体再遮掉」：取最差姿势，把该姿势下穿出的
-身体面删掉（扩大 Mask），再跑一遍全部姿势对比。没变好或者别的姿势明显变差就整体回滚。
-报告会写清问题出在哪个身体区域（按高度分带统计穿出点数量），并给出修复前后的对比图。
+**自动修复**。穿模的修法就是「把露出来的身体再遮掉」：取最差姿势（或真实动作的最差帧），
+把该状态下穿出的身体面删掉（扩大 Mask），再跑一遍全部姿势/帧对比。没变好或者别的姿势明显变差就整体回滚。
+报告会写清问题出在哪个身体区域（按高度分带统计穿出点数量）和对应帧号，并给出修复前后的对比图。
 
 ## 目录结构
 

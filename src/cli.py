@@ -60,6 +60,8 @@ def _cmd_motion_check(args) -> int:
     argv = ["--mode", "motion-check", "--source", args.model]
     if args.out:
         argv += ["--out", args.out]
+    if args.motions:
+        argv += ["--motions", args.motions]
     if args.repair:
         argv += ["--repair"]
     res = blender_env.run_in_blender(
@@ -140,6 +142,8 @@ def build_parser() -> argparse.ArgumentParser:
                        help="run the high risk pose suite and measure clipping")
     p.add_argument("--model", required=True)
     p.add_argument("--out", default=None)
+    p.add_argument("--motions", default=None,
+                   help="VMD to drive the check with a real motion")
     p.add_argument("--repair", action="store_true",
                    help="widen the body mask where the clothes get pierced "
                         "and write model_repaired.pmx")
