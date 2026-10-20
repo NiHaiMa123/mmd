@@ -46,21 +46,39 @@ def _cmd_extract_preview(args) -> int:
     return 0 if res.get("ok") else 1
 
 
-def _cmd_dress(args) -> int:
+def _cmd_extract(args) -> int:
+    argv = ["--mode", "extract", "--source", args.source, "--out", args.out]
+    if args.selection:
+        argv += ["--selection", args.selection]
     res = blender_env.run_in_blender(
-        "scripts/blender_runner.py",
-        ["--mode", "dress", "--source", args.source, "--target", args.target,
-         "--out", args.out, "--config", args.config],
-        blender=args.blender)
+        "scripts/blender_runner.py", argv, blender=args.blender)
+    blender_env.print_json(res)
+    return 0 if res.get("ok") else 1
+
+
+def _cmd_dress(args) -> int:
+    argv = ["--mode", "dress", "--source", args.source, "--target", args.target,
+            "--out", args.out]
+    if args.config:
+        argv += ["--config", args.config]
+    if args.selection:
+        argv += ["--selection", args.selection]
+    if args.stages:
+        argv += ["--stages"]
+    res = blender_env.run_in_blender(
+        "scripts/blender_runner.py", argv, blender=args.blender)
     blender_env.print_json(res)
     return 0 if res.get("ok") else 1
 
 
 def _cmd_qa(args) -> int:
+    argv = ["--mode", "qa", "--source", args.model]
+    if args.motions:
+        argv += ["--motions", args.motions]
+    if args.out:
+        argv += ["--out", args.out]
     res = blender_env.run_in_blender(
-        "scripts/blender_runner.py",
-        ["--mode", "qa", "--source", args.model, "--motions", args.motions],
-        blender=args.blender)
+        "scripts/blender_runner.py", argv, blender=args.blender)
     blender_env.print_json(res)
     return 0 if res.get("ok") else 1
 
@@ -88,16 +106,30 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--out", default=str(REPO_ROOT / "outputs" / "preview"))
     p.set_defaults(func=_cmd_extract_preview)
 
+    p = sub.add_parser("extract", help="copy the selected parts into a garment mesh")
+    p.add_argument("--source", required=True)
+    p.add_argument("--out", default=str(REPO_ROOT / "outputs" / "extract01"))
+    p.add_argument("--selection", default=None,
+                   help="selection.json from extract-preview")
+    p.set_defaults(func=_cmd_extract)
+
     p = sub.add_parser("dress", help="transfer clothing onto the fixed base body")
     p.add_argument("--source", required=True)
     p.add_argument("--target", required=True)
     p.add_argument("--out", default=str(REPO_ROOT / "outputs" / "dress01"))
     p.add_argument("--config", default=None)
+    p.add_argument("--selection", default=None,
+                   help="selection.json from extract-preview")
+    p.add_argument("--stages", action="store_true",
+                   help="render a preview after every pipeline step")
     p.set_defaults(func=_cmd_dress)
 
     p = sub.add_parser("qa", help="static / motion checks on a produced model")
     p.add_argument("--model", required=True)
     p.add_argument("--motions", default=None)
+    p.add_argument("--out", default=None,
+                   help="output dir; manifest.json here tells QA which "
+                        "materials belong to the garment")
     p.set_defaults(func=_cmd_qa)
     return ap
 

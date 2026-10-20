@@ -216,6 +216,7 @@ def model_info(objects: list[bpy.types.Object] | None = None) -> dict[str, Any]:
         },
         "materials": sorted(m.name for m in mats),
         "bones": {a.name: [b.name for b in a.data.bones] for a in arms},
+        "bone_data": {a.name: bone_table(a) for a in arms},
         "textures": _texture_paths(mats),
         "parts": mesh_table(body),
     }

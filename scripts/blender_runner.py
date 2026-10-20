@@ -13,6 +13,8 @@ import sys
 import traceback
 from pathlib import Path
 
+import bpy
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
@@ -31,9 +33,12 @@ def _parse() -> argparse.Namespace:
     ap.add_argument("--target", default=None)
     ap.add_argument("--out", default=None)
     ap.add_argument("--config", default=None)
+    ap.add_argument("--selection", default=None)
     ap.add_argument("--motions", default=None)
     ap.add_argument("--scale", type=float, default=None)
     ap.add_argument("--keep-scene", action="store_true")
+    ap.add_argument("--stages", action="store_true",
+                    help="render a preview after every pipeline step")
     return ap.parse_args(args=argv)
 
 
@@ -83,20 +88,89 @@ def main() -> int:
             result.update(extraction.extract_preview(objs, args.out))
             result["ok"] = True
 
+        elif args.mode == "extract":
+            from src import extraction, garment
+            ie.clear_scene()
+            objs = ie.import_pmx(args.source)
+            body = ie.model_meshes(objs)
+            parts = extraction.enumerate_parts(body)
+            bbox = extraction._scene_bbox(body)
+            height = bbox[1][2] - bbox[0][2]
+            classified = extraction.classify_parts(parts, height, bbox)
+            if args.selection and Path(args.selection).exists():
+                selection = json.loads(Path(args.selection).read_text(
+                    encoding="utf-8"))
+            else:
+                selection = extraction.suggest_selection(
+                    classified, extraction.material_table(classified))
+            res = garment.extract_clothing(objs, classified,
+                                           selection.get("selected_parts", []),
+                                           args.out)
+            result.update(res["summary"])
+            for o in body:
+                o.hide_render = True
+            imgs = extraction.render_objects(res["cloth"],
+                                             Path(args.out) / "preview",
+                                             prefix="cloth")
+            for o in body:
+                o.hide_render = False
+            result["images"] = imgs
+            blend = Path(args.out) / "cloth.blend"
+            bpy.ops.wm.save_as_mainfile(filepath=str(blend))
+            result["blend"] = str(blend)
+            result["ok"] = True
+
         elif args.mode == "dress":
-            from src import dressing
+            from src import dressing, extraction
             ie.clear_scene()
             src_objs = ie.import_pmx(args.source)
             tgt_objs = ie.import_pmx(args.target)
+            selection = None
+            if args.selection and Path(args.selection).exists():
+                selection = json.loads(Path(args.selection).read_text(
+                    encoding="utf-8"))
             result.update(dressing.run(src_objs, tgt_objs, args.out,
-                                       config_path=args.config))
+                                       config_path=args.config,
+                                       selection=selection,
+                                       stages=args.stages))
+            # preview of the dressed result
+            body = ie.model_meshes(tgt_objs)
+            if body:
+                imgs = extraction.render_objects(body, Path(args.out) / "preview",
+                                                 prefix="dressed")
+                result["images"] = imgs
+
+            # P1-07: the exported PMX has to load again on its own
+            if result.get("pmx"):
+                try:
+                    ie.clear_scene()
+                    again = ie.import_pmx(result["pmx"])
+                    info = ie.model_info(again)
+                    result["reimport"] = {
+                        "counts": info["counts"],
+                        "materials": info["materials"],
+                        "textures": len(info["textures"]),
+                        "missing_textures": [t for t in info["textures"]
+                                             if not Path(t).exists()],
+                    }
+                except Exception as exc:            # noqa: BLE001
+                    result["reimport"] = {"error": f"{type(exc).__name__}: {exc}"}
             result["ok"] = True
 
         elif args.mode == "qa":
             from src import qa
             ie.clear_scene()
             objs = ie.import_pmx(args.source)
-            result.update(qa.run_qa(objs, motions=args.motions))
+            garment_materials = None
+            if args.out:
+                manifest = Path(args.out) / "manifest.json"
+                if manifest.exists():
+                    data = json.loads(manifest.read_text(encoding="utf-8"))
+                    garment_materials = data.get("selection", {}).get(
+                        "selected_materials", [])
+            result.update(qa.run_qa(objs, motions=args.motions,
+                                    out_dir=args.out,
+                                    garment_materials=garment_materials))
             result["ok"] = True
 
         else:

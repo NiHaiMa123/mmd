@@ -399,6 +399,18 @@ def _duplicate_with_colors(meshes, parts, color_of_part, name_suffix="_pmap"):
 
 
 def _setup_lights(scene):
+    """Idempotent preview lighting.
+
+    Every render pass calls this, so the old lights have to go - otherwise the
+    scene accumulates lamps and the later passes come out blown out.
+    """
+    for ob in list(bpy.data.objects):
+        if ob.name.startswith("PreviewLight_"):
+            bpy.data.objects.remove(ob, do_unlink=True)
+    for world in list(bpy.data.worlds):
+        if world.name.startswith("PreviewWorld"):
+            bpy.data.worlds.remove(world)
+
     world = bpy.data.worlds.new("PreviewWorld")
     world.use_nodes = True
     bg = world.node_tree.nodes.get("Background")
@@ -462,19 +474,7 @@ def _render_views(scene, meshes, copies, bbox, ortho, out_dir, prefix):
     return written
 
 
-def render_preview(meshes, parts, out_dir, width=900, height=1200,
-                   selected: set[int] | None = None) -> list[str]:
-    """Render 4 orthographic views for every colour scheme plus a textured pass.
-
-    Schemes:
-      partmap_material  - one colour per material slot
-      partmap_category  - one colour per classification (clothing / skin / ...)
-      partmap_selection - the currently selected clothing parts highlighted
-      textured          - the original MMD materials, for reference
-    """
-    out_dir = Path(out_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    scene = bpy.context.scene
+def _setup_render(scene, width=900, height=1200) -> None:
     for eng in ('BLENDER_EEVEE_NEXT', 'BLENDER_EEVEE'):
         try:
             scene.render.engine = eng
@@ -490,6 +490,36 @@ def render_preview(meshes, parts, out_dir, width=900, height=1200,
         scene.view_settings.view_transform = 'Standard'
     except Exception:
         pass
+
+
+def render_objects(objs: list[bpy.types.Object], out_dir, width=900, height=1200,
+                   prefix="view") -> list[str]:
+    """Render 4 orthographic views of the given objects with their materials."""
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    scene = bpy.context.scene
+    _setup_render(scene, width, height)
+    bbox = _scene_bbox(objs)
+    size = max(bbox[1][i] - bbox[0][i] for i in range(3))
+    ortho = size * 1.12
+    _setup_lights(scene)
+    return _render_views(scene, objs, [], bbox, ortho, out_dir, prefix)
+
+
+def render_preview(meshes, parts, out_dir, width=900, height=1200,
+                   selected: set[int] | None = None) -> list[str]:
+    """Render 4 orthographic views for every colour scheme plus a textured pass.
+
+    Schemes:
+      partmap_material  - one colour per material slot
+      partmap_category  - one colour per classification (clothing / skin / ...)
+      partmap_selection - the currently selected clothing parts highlighted
+      textured          - the original MMD materials, for reference
+    """
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    scene = bpy.context.scene
+    _setup_render(scene, width, height)
 
     bbox = _scene_bbox(meshes)
     size = max(bbox[1][i] - bbox[0][i] for i in range(3))
