@@ -132,8 +132,9 @@ def setup(scene: bpy.types.Scene, arm: bpy.types.Object,
     drive = [(r, r.mmd_rigid.bone) for r in rigids
              if _mode(r) in ("1", "2") and r.mmd_rigid.bone in bones]
 
-    def apply_physics():
-        dg = bpy.context.evaluated_depsgraph_get()
+    def apply_physics(scene=None, depsgraph=None):
+        # blender calls the frame change handlers with (scene, depsgraph)
+        dg = depsgraph or bpy.context.evaluated_depsgraph_get()
         inv = arm.matrix_world.inverted()
         for r, bone in drive:
             arm.pose.bones[bone].matrix = inv @ r.evaluated_get(dg).matrix_world
