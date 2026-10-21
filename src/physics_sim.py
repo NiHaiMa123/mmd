@@ -152,11 +152,26 @@ def setup(scene: bpy.types.Scene, arm: bpy.types.Object,
 
 
 def run(scene: bpy.types.Scene, first_frame: int, last_frame: int) -> dict[str, Any]:
-    """Step the timeline so the simulation runs, frame by frame."""
+    """Step the timeline so the simulation runs, frame by frame.
+
+    Bullet only simulates when the frame advances one at a time from the point
+    cache's start.  Jumping into the middle of the range leaves every body at
+    its keyframed position - the simulation silently does nothing, and it looks
+    exactly like "the physics is broken".
+
+    The cache start is therefore pulled to the first frame we care about, and
+    the range is stepped from there.
+    """
+    cache = scene.rigidbody_world.point_cache
+    if cache.frame_start != first_frame:
+        cache.frame_start = first_frame
+    scene.frame_set(first_frame)
+    scene.view_layers[0].update()
     for f in range(first_frame, last_frame + 1):
         scene.frame_set(f)
-        bpy.context.view_layer.update()
-    return {"frames": [first_frame, last_frame]}
+        scene.view_layers[0].update()
+    return {"frames": [first_frame, last_frame],
+            "cache_start": cache.frame_start}
 
 
 def unregister() -> None:
