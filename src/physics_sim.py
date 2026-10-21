@@ -9,7 +9,8 @@ This module fills both gaps:
 
   * the MMD collision group of every rigid body becomes a Blender collision
     collection, and the MMD collision mask becomes the collection
-    membership, so two bodies collide exactly when MMD says they do;
+    membership, so two bodies collide when they share a layer - an
+    approximation of the MMD rule, which needs both masks to allow the pair;
   * the MMD dynamics type becomes the Blender body type
     (0 follow bone -> KINEMATIC, 1 / 2 physics -> ACTIVE);
   * the mode 0 bodies are keyframed from the bone they follow, and a frame
@@ -25,6 +26,14 @@ Usage (inside Blender, after importing a PMX and a VMD):
 The MMD collision mask is an "allowed to collide with" list - verified from
 the models themselves: in 达妮娅 the hair sits in group 1 with the mask {1}
 and the torso in group 0 with the mask {0}, so the two never collide.
+
+MMD needs both directions to allow the pair: A's mask has to contain B's
+group *and* B's mask has to contain A's group.  Blender's rigid body world
+works with collection layers instead, and a body collides with another one
+as soon as they share a layer - that is weaker than the MMD rule.  The
+translation below is therefore an **approximation**: the physics QA says
+whether the outfit is allowed to touch the base body, it is not a faithful
+MMD simulation.  See docs/REVIEW.md (P0-02).
 """
 from __future__ import annotations
 
@@ -113,6 +122,13 @@ def setup(scene: bpy.types.Scene, arm: bpy.types.Object,
         rb.use_deactivation = False
 
     # the mode 0 colliders follow their bone
+    # KNOWN BUG: the rigid body is put on the bone's origin, so the offset it
+    # had in the rest pose is lost.  MMD keeps that offset, and without it the
+    # collider is in the wrong place.  The fix is to record
+    #   offset = (bone rest world)^-1 @ rigid body rest world
+    # before the animation starts and to apply it to the bone's pose matrix
+    # every frame.  Until that is done the physics numbers are an
+    # approximation - see docs/REVIEW.md (P0-01).
     follow = [(r, r.mmd_rigid.bone) for r in rigids
               if _mode(r) == "0" and r.mmd_rigid.bone in bones]
     for r, _b in follow:

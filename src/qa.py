@@ -253,7 +253,8 @@ def _rigid_bvh(r: bpy.types.Object):
 
 def _cloth_inside_colliders(cloth_me, gfaces: list[int],
                             colliders: list[tuple[str, BVHTree, Vector, float]],
-                            stride: int = 4) -> tuple[int, int, dict[str, int]]:
+                            stride: int = 4,
+                            world=None) -> tuple[int, int, dict[str, int]]:
     """How many garment vertices ended up inside one of the colliders.
 
     This is the other direction of the clipping: the body piercing the clothes
@@ -261,6 +262,9 @@ def _cloth_inside_colliders(cloth_me, gfaces: list[int],
     the garment ending up inside the leg.  The colliders are the honest
     reference for that - the body mesh has holes where the mask deleted the
     covered faces, the collision shapes do not.
+
+    The colliders are built in world space, so the garment's vertices have to
+    be transformed as well.  `world` is the garment object's matrix.
     """
     verts = set()
     for fi in gfaces:
@@ -271,6 +275,8 @@ def _cloth_inside_colliders(cloth_me, gfaces: list[int],
     per_bone: dict[str, int] = {}
     for i in sorted(verts)[::stride]:
         co = cloth_me.vertices[i].co
+        if world is not None:
+            co = world @ co
         checked += 1
         for bone, bvh, center, radius in colliders:
             if (co - center).length > radius:
@@ -507,7 +513,7 @@ def physics_motion_check(objects: list[bpy.types.Object], motions: str,
             if bvh:
                 colliders.append((o.mmd_rigid.bone or "?", *bvh))
         in_body, in_checked, in_by_bone = _cloth_inside_colliders(
-            gme, split["garment_faces"], colliders)
+            gme, split["garment_faces"], colliders, world=gmesh.matrix_world)
         in_leg = sum(n for bone, n in in_by_bone.items()
                      if body_region(bone) in ("leg", "foot"))
         bpy.data.meshes.remove(bme)
@@ -520,10 +526,12 @@ def physics_motion_check(objects: list[bpy.types.Object], motions: str,
         results.append({"frame": f, "pierced": pierced, "checked": checked,
                         "ratio": round(pierced / max(checked, 1), 5),
                         "regions": regions,
-                        "cloth_in_body": in_body,
-                        "cloth_in_body_checked": in_checked,
-                        "cloth_in_leg": in_leg,
-                        "cloth_in_body_by_bone": in_by_bone})
+                        # the colliders are loose proxies: a garment inside one
+                        # is a physics diagnosis, not a visible penetration
+                        "proxy_in_body": in_body,
+                        "proxy_in_body_checked": in_checked,
+                        "proxy_in_leg": in_leg,
+                        "proxy_in_body_by_bone": in_by_bone})
     totals: dict[str, int] = {}
     for r in results:
         for key, n in r["regions"].items():
@@ -537,8 +545,8 @@ def physics_motion_check(objects: list[bpy.types.Object], motions: str,
         "per_frame": results,
         "pierced_by_region": dict(sorted(totals.items(),
                                          key=lambda kv: -kv[1])),
-        "cloth_in_body_total": sum(r["cloth_in_body"] for r in results),
-        "cloth_in_leg_total": sum(r["cloth_in_leg"] for r in results),
+        "proxy_in_body_total": sum(r["proxy_in_body"] for r in results),
+        "proxy_in_leg_total": sum(r["proxy_in_leg"] for r in results),
         "max_ratio": max((r["ratio"] for r in results), default=0.0),
     }
 

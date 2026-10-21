@@ -49,7 +49,25 @@
 **`腿` 材质**：刻晴的过膝袜。已在 `extraction` 里新增 `LEGWEAR_WORDS`（放在皮肤判定之后，
 所以 `腿肌肤` 这类命名仍判为皮肤），重新生成的 `outputs/preview2/selection.json` 已包含 `腿`。
 **尚未验证**：过膝袜同样是「漆皮层」，贴在目标腿上大概率会被目标腿穿出，
-可能需要与鞋面同款的「细分 + 贴合」处理。
+可能需要与鞋面同款的「细分 + 贴合」处理；review 也建议把它并入 body-derived shell 那一类。
+
+**外部 review**：`docs/REVIEW.md`（提交 d40d181，由 ChatGPT 读仓库后写入）。
+它的主要结论，逐条对照本仓库实测：
+
+| review 结论 | 本仓库的验证 |
+|---|---|
+| `new_from_object` 读原对象得未变形网格、读 evaluated 得最终几何 | **只对了一半**：Blender 5.2.1 上读原对象确实是不带修改器的（实测与 `to_mesh()` 最大差 1.28 m）；但读 **evaluated 对象会返回空网格**（实测 0 顶点），所以「传 evaluated」这条路走不通。现在的 `to_mesh()+copy()` 是对的 |
+| P0-01 Mode 0 刚体的静置偏移被丢掉（刚体被贴到骨原点） | **确认是 bug**，已在 `physics_sim.setup()` 标注；要修：记录 `offset = (骨静置世界)^-1 @ 刚体静置世界`，每帧用 `骨姿态 @ offset` |
+| P0-02 Blender 的 collision collection ≠ PMX 双向 group/mask | **确认**：MMD 要求两个方向都允许，Blender 只要共享一层就撞。已把 `physics_sim` 里「完全等价」的说法改成「近似」 |
+| P0-03 刚体 BVH 是世界坐标、衣服顶点是局部坐标 | **确认**：已让 `_cloth_inside_colliders` 走世界坐标；指标改名 `proxy_in_body` / `proxy_in_leg`，因为碰撞体是宽松代理，不等于可见穿模 |
+| P0-04 sign flip + 6 mm 不是「总穿模量」 | **接受**：穿得更深（>6 mm）反而不计；本仓库的鞋最远偏差 2 cm，恰好落在盲区外。指标降级为回归 proxy |
+| P0-05 细分选面没有材质过滤 | **确认**：已把 `subdivide_shoe` / `lay_shoe_on_foot` **默认关闭**，等按语义拆件后再开 |
+| P1-07 目标权重被混了两遍（t 变成 2t） | **确认是真 bug**，已修：`src/dressing.py` 里目标骨只混一次 |
+| P1-09 局部/世界坐标混用、PMX 只有 16 组、`ok=True` 掩盖 QA 失败等 | 记录在案，分批修 |
+
+review 给的分阶段计划（R0 物理代理 → R1 坐标与指标 → R2 鞋的语义拆件 → R3 鞋楦变形 → R4 身体派生 shell → R5 权重/形态键）已抄进 `docs/REVIEW.md`。
+它的核心判断我认同：**608 vs 3924 顶点是风险线索而不是充分根因**，鞋应该按语义拆成「漆皮面 / 鞋头鞋帮 / 鞋底 / 金饰 / 过膝袜」分别处理，零厚度漆皮层走「从目标素体表面复制片区再迁移外观」的 body-derived shell。
+
 
 
 ## 已验证

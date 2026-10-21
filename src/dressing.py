@@ -473,6 +473,7 @@ def transfer_target_weights(garment: bpy.types.Object,
     me = garment.data
     tme = target_body.data
     tmw = target_body.matrix_world
+    gmw = garment.matrix_world
     skin_faces = body_faces(target_body, skip_hair=True, skip_face=True)
 
     # the faces of every search domain: a face belongs to a domain when all
@@ -511,7 +512,8 @@ def transfer_target_weights(garment: bpy.types.Object,
         tree, faces = global_tree, global_faces
         if domains and gdom[vi] and gdom[vi] in trees:
             tree, faces = trees[gdom[vi]]
-        loc, _nrm, k, dist = tree.find_nearest(v.co)
+        # the trees are built in world space, so the query has to be too
+        loc, _nrm, k, dist = tree.find_nearest(gmw @ v.co)
         if loc is None or dist > max_dist:
             continue
         poly = tme.polygons[faces[k]]
@@ -534,7 +536,10 @@ def transfer_target_weights(garment: bpy.types.Object,
             else:
                 new[name] = (1.0 - t) * weight
         for name, weight in blended.items():
-            if name in body_bones:
+            # a body bone the garment did not carry yet: it comes from the
+            # target only.  A bone that was already there was mixed in above,
+            # adding it again would turn t into 2t.
+            if name in body_bones and name not in current[vi]:
                 new[name] = new.get(name, 0.0) + t * weight
         # keep the sum at one
         total = sum(new.values())
@@ -1740,8 +1745,12 @@ DEFAULT_CONFIG = {
         # thousands.  Fitting that coarse surface cuts the base body's toes
         # through it - the resolution is the problem, not the position.  So
         # the shoe is subdivided first and then laid on the foot.
-        "subdivide_shoe": 2,
-        "lay_shoe_on_foot": True,
+        # Both steps are experimental: the subdivision does not cut the
+        # triangles yet and the projection treats the shoe like skin, which
+        # breaks the toe cap and the metal trim (see docs/REVIEW.md).
+        # Off by default until the semantic parts are separated.
+        "subdivide_shoe": 0,
+        "lay_shoe_on_foot": False,
         "shoe_margin": 0.004,
         "shoe_blend_rings": 3,
         # fit the finger sleeves and the shoes onto the base body's limbs
