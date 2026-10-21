@@ -201,8 +201,11 @@ def migrate_physics(src_objects: list[bpy.types.Object],
         src_bone = src_arm.data.bones.get(bone)
         if src_bone is not None:
             bone_world = src_arm.matrix_world @ src_bone.matrix_local
+            # `local` is the rigid body's transform in the source bone's own
+            # frame; `d` already carries that frame onto the target bone, so
+            # the bone's world position must not be multiplied in a second time
             local = o.matrix_world @ bone_world.inverted()
-            new_matrix = d @ bone_world @ local
+            new_matrix = d @ local
             loc = new_matrix.to_translation()
             rot = new_matrix.to_euler("YXZ")
         else:
