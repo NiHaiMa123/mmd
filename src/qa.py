@@ -173,6 +173,14 @@ def _evaluated_mesh_copy(obj: bpy.types.Object):
     depsgraph = bpy.context.evaluated_depsgraph_get()
     ev = obj.evaluated_get(depsgraph)
     me = bpy.data.meshes.new_from_object(obj, preserve_all_data_layers=True)
+    # the copy carries no vertex normals, and the piercing test works on the
+    # sign of the normal - take them from the original mesh
+    src = obj.data
+    if src is not None and len(src.vertices) == len(me.vertices):
+        buf = [0.0] * (len(me.vertices) * 3)
+        src.vertices.foreach_get("normal", buf)
+        me.vertices.foreach_set("normal", buf)
+        me.update()
     return me, ev
 
 
@@ -389,6 +397,9 @@ def physics_motion_check(objects: list[bpy.types.Object], motions: str,
         motion_mod._bvh_from(bme, split["skin_faces"]),
         motion_mod._bvh_from(gme, split["garment_faces"]),
         bme, split["skin_faces"])
+    bpy.data.meshes.remove(bme)
+    if gme is not bme:
+        bpy.data.meshes.remove(gme)
     dom = dressing.dominant_bones(bmesh_obj)
 
     try:
@@ -405,15 +416,15 @@ def physics_motion_check(objects: list[bpy.types.Object], motions: str,
     for f in range(first_frame, last_frame + 1, 15):
         physics_sim.run(scene, f, f)
         bpy.context.view_layer.update()
-        # to_mesh, not new_from_object: the copy has no vertex normals and
-        # the sign test needs them.  The meshes are simply not freed - the
-        # depsgraph copy stays valid as long as nobody releases it.
-        bme, bev = _evaluated_mesh(bmesh_obj)
-        gme, gev = _evaluated_mesh(gmesh)
+        bme, bev = _evaluated_mesh_copy(bmesh_obj)
+        gme, gev = _evaluated_mesh_copy(gmesh)
         pierced, checked, hits = motion_mod._pierce_count(
             motion_mod._bvh_from(bme, split["skin_faces"]),
             motion_mod._bvh_from(gme, split["garment_faces"]),
             bme, split["skin_faces"], rest_sign, stride=3)
+        bpy.data.meshes.remove(bme)
+        if gme is not bme:
+            bpy.data.meshes.remove(gme)
         regions: dict[str, int] = {}
         for i in hits:
             key = body_region(dom[i]) if i < len(dom) else "other"
