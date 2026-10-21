@@ -406,25 +406,87 @@ def _vertex_weights(mesh_obj: bpy.types.Object, index: int) -> dict[str, float]:
     return out
 
 
-def transfer_target_weights(garment: bpy.types.Object, target_body: bpy.types.Object,
+# The fingers are so close together that a global "nearest face" search hands
+# the index finger's weights to the middle finger.  Every digit gets its own
+# search domain.
+DIGIT_NAMES = (
+    ("親指", "thumb"),
+    ("人指", "index"),
+    ("中指", "middle"),
+    ("薬指", "ring"),
+    ("小指", "little"),
+)
+
+
+def digit_domain(bone_name: str) -> str | None:
+    """'人指１.L' -> 'index_L'; None when the bone is not a finger or a palm."""
+    base = _bone_base(bone_name)
+    side = _bone_side(bone_name)
+    if not side:
+        return None
+    if base.startswith("手首"):
+        return f"palm_{side}"
+    for prefix, name in DIGIT_NAMES:
+        if base.startswith(prefix):
+            return f"{name}_{side}"
+    return None
+
+
+def _bvh_with_faces(obj: bpy.types.Object, face_indices: list[int]):
+    """A BVH plus the mesh polygon index of every face inside it.
+
+    `BVHTree.find_nearest` returns an index into the polygon list that was
+    handed to the tree - not into the mesh.  The old code used that index on
+    the mesh directly, so it read the weights of a completely different face.
+    """
+    me = obj.data
+    mw = obj.matrix_world
+    verts = [mw @ v.co for v in me.vertices]
+    polys = [list(me.polygons[i].vertices) for i in face_indices]
+    tree = BVHTree.FromPolygons(verts, polys, all_triangles=False, epsilon=0.0)
+    return tree, list(face_indices)
+
+
+def transfer_target_weights(garment: bpy.types.Object,
+                            target_body: bpy.types.Object,
                             body_bones: set[str], tightness: list[float],
-                            blend: float = 0.8, max_dist: float = 0.06
+                            blend: float = 0.8, max_dist: float = 0.06,
+                            domains: bool = True,
+                            always_regions: list[bool] | None = None
                             ) -> dict[str, Any]:
     """Give the tight parts of the garment the target body's weight gradient.
 
-    The plan asks for the skin weights to be taken from the base body by
-    nearest face interpolation - that is what makes a garment follow the
-    shoulders, armpit and hips of *this* body instead of the proportions of
-    the body the garment was modelled on.  The loose parts (skirt, sleeves)
-    keep their own garment bones.
-    """
-    from . import import_export as ie
+    The plan asks the skin weights to be taken from the base body by nearest
+    face interpolation - that is what makes a garment follow the shoulders,
+    armpit and hips of *this* body instead of the proportions of the body the
+    garment was modelled on.  The loose parts (skirt, sleeves) keep their own
+    garment bones.
 
+    Two things make the plain version unusable on the hands:
+
+    * the search has to stay inside the digit the vertex belongs to, otherwise
+      the index finger picks up the middle finger's weights;
+    * the fingers are tight by construction, but the geometric tightness
+      measure cannot tell them apart, so they need their own gate
+      (`always_regions`).
+    """
     me = garment.data
     tme = target_body.data
     tmw = target_body.matrix_world
     skin_faces = body_faces(target_body, skip_hair=True, skip_face=True)
-    bvh = build_bvh(target_body, skin_faces)
+
+    # the faces of every search domain: a face belongs to a domain when all
+    # of its vertices are driven by the same digit
+    tdom = [digit_domain(n) for n in dominant_bones(target_body)]
+    per_domain: dict[str, list[int]] = {}
+    for fi in skin_faces:
+        found = {tdom[i] for i in tme.polygons[fi].vertices} - {None}
+        if len(found) != 1:
+            continue
+        per_domain.setdefault(found.pop(), []).append(fi)
+
+    global_tree, global_faces = _bvh_with_faces(target_body, skin_faces)
+    trees = {d: _bvh_with_faces(target_body, f) for d, f in per_domain.items()}
 
     gnames = [vg.name for vg in garment.vertex_groups]
     # current weights per vertex
@@ -437,15 +499,22 @@ def transfer_target_weights(garment: bpy.types.Object, target_body: bpy.types.Ob
             d[gnames[g.group]] = d.get(gnames[g.group], 0.0) + g.weight
         current.append(d)
 
+    gdom = [digit_domain(n) for n in dominant_bones(garment)]
+
     updated = 0
     for vi, v in enumerate(me.vertices):
         t = tightness[vi] * blend
+        if always_regions is not None and always_regions[vi]:
+            t = max(t, blend)
         if t <= 0.001:
             continue
-        loc, _nrm, fi, dist = bvh.find_nearest(v.co)
+        tree, faces = global_tree, global_faces
+        if domains and gdom[vi] and gdom[vi] in trees:
+            tree, faces = trees[gdom[vi]]
+        loc, _nrm, k, dist = tree.find_nearest(v.co)
         if loc is None or dist > max_dist:
             continue
-        poly = tme.polygons[fi]
+        poly = tme.polygons[faces[k]]
         if len(poly.vertices) != 3:
             continue
         a, b, c = [tmw @ tme.vertices[i].co for i in poly.vertices]
@@ -491,7 +560,8 @@ def transfer_target_weights(garment: bpy.types.Object, target_body: bpy.types.Ob
             vg.add(indices, weight, 'REPLACE')
 
     return {"vertices_reweighted": updated,
-            "groups": len(buckets)}
+            "groups": len(buckets),
+            "domains": len(trees)}
 
 
 # --------------------------------------------------------------------------
@@ -1487,6 +1557,11 @@ DEFAULT_CONFIG = {
         "use_tight_fit": False,
         "use_target_weights": False,
         "target_weight_blend": 0.8,
+        # keep the weight search inside the digit the vertex belongs to
+        "weight_domains": True,
+        # the hand is tight by construction - transfer its weights even when
+        # the geometric tightness measure says nothing
+        "weight_limbs": True,
     },
     "body_mask": {
         "enabled": True,
@@ -1680,10 +1755,15 @@ def run(src_objs: list[bpy.types.Object], tgt_objs: list[bpy.types.Object],
 
     # P1-05: let the tight parts follow the *target* body's weight gradient
     reweight_stats: dict[str, Any] = {}
-    if cloth and cfg["fit"].get("use_target_weights", True):
+    if cloth and cfg["fit"].get("use_target_weights", False):
+        # the hands are tight by construction, but the geometric tightness
+        # measure cannot tell the fingers apart - they get their own gate
+        hands = [bool(r) and r.startswith("hand") for r in limb_regions(cloth[0])]
         reweight_stats = transfer_target_weights(
             cloth[0], tgt_body_meshes[0], body_bones, tightness,
-            blend=cfg["fit"].get("target_weight_blend", 0.8))
+            blend=cfg["fit"].get("target_weight_blend", 0.8),
+            domains=cfg["fit"].get("weight_domains", True),
+            always_regions=hands if cfg["fit"].get("weight_limbs", True) else None)
 
     fit_stats = fit_to_body(cloth[0], tgt_bvh, tightness,
                             offset=cfg["fit"]["offset"],

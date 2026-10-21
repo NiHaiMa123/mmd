@@ -211,6 +211,28 @@ def _inside(bvh: BVHTree, point: Vector, max_dist: float = 3.0) -> bool:
     return odd > len(_CHECK_DIRS) / 2
 
 
+# Where a body point is, so a piercing report can be read per body part.
+# The overall ratio says "something is wrong"; the breakdown says where.
+REGION_RULES = (
+    ("hand", ("人指", "中指", "薬指", "小指", "親指", "手首", "手捩")),
+    ("foot", ("足", "つま先")),
+    ("head", ("頭", "首")),
+    ("arm", ("肩", "腕", "ひじ")),
+    ("torso", ("胸", "上半身", "腹", "背")),
+    ("waist", ("腰", "下半身", "尻")),
+    ("leg", ("ひざ", "腿")),
+)
+
+
+def body_region(bone_name: str) -> str:
+    """The body part a bone belongs to."""
+    base = bone_name.split(".")[0]
+    for region, prefixes in REGION_RULES:
+        if any(base.startswith(p) for p in prefixes):
+            return region
+    return "other"
+
+
 def motion_check(objects: list[bpy.types.Object], motions: str | None,
                  garment_materials: list[str] | None = None,
                  frame_step: int = 15, sample_stride: int = 3,
@@ -225,11 +247,15 @@ def motion_check(objects: list[bpy.types.Object], motions: str | None,
     if not motions:
         return {"skipped": "no motion file given"}
 
+    from . import dressing
     from . import motion as motion_mod
 
     split = split_faces(objects, garment_materials)
     gmesh = split["garment_mesh"]
     bmesh_obj = split["body_mesh"]
+    region_of: list[str] = []
+    for name in dressing.dominant_bones(bmesh_obj):
+        region_of.append(body_region(name))
     if gmesh is None or bmesh_obj is None:
         return {"skipped": "model has no garment/skin split"}
     if not split["garment_faces"] or not split["skin_faces"]:
@@ -273,18 +299,31 @@ def motion_check(objects: list[bpy.types.Object], motions: str | None,
             gme, gev = bme, bev
         else:
             gme, gev = _evaluated_mesh(gmesh)
-        pierced, checked, _hits = motion_mod._pierce_count(
+        pierced, checked, hits = motion_mod._pierce_count(
             motion_mod._bvh_from(bme, split["skin_faces"]),
             motion_mod._bvh_from(gme, split["garment_faces"]),
             bme, split["skin_faces"], rest_sign, stride=sample_stride)
         bev.to_mesh_clear()
         if gev is not bev:
             gev.to_mesh_clear()
+        per_region: dict[str, int] = {}
+        for i in hits:
+            key = region_of[i] if i < len(region_of) else "other"
+            per_region[key] = per_region.get(key, 0) + 1
         results.append({"frame": f, "pierced": pierced, "checked": checked,
-                        "ratio": round(pierced / max(checked, 1), 5)})
+                        "ratio": round(pierced / max(checked, 1), 5),
+                        "regions": per_region})
     scene.frame_set(start)
     results.sort(key=lambda r: -r["ratio"])
+    worst = results[0] if results else {}
+    totals: dict[str, int] = {}
+    for r in results:
+        for key, n in r.get("regions", {}).items():
+            totals[key] = totals.get(key, 0) + n
     return {
+        "pierced_by_region": dict(sorted(totals.items(),
+                                         key=lambda kv: -kv[1])),
+        "worst_frame_regions": worst.get("regions", {}),
         "motion": motions,
         "frame_range": [start, end],
         "sampled_frames": len(frames),
