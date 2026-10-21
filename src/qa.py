@@ -168,9 +168,11 @@ def _evaluated_mesh_copy(obj: bpy.types.Object):
     the depsgraph copy a mesh was taken from.  A mesh built with
     new_from_object is independent of it.
     """
+    # new_from_object does the evaluation itself, so it gets the *original*
+    # object - handing it an already evaluated one returns an empty mesh
     depsgraph = bpy.context.evaluated_depsgraph_get()
     ev = obj.evaluated_get(depsgraph)
-    me = bpy.data.meshes.new_from_object(ev, preserve_all_data_layers=True)
+    me = bpy.data.meshes.new_from_object(obj, preserve_all_data_layers=True)
     return me, ev
 
 
