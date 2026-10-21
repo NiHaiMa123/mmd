@@ -206,8 +206,20 @@ def migrate_physics(src_objects: list[bpy.types.Object],
             # the bone's world position must not be multiplied in a second time
             local = o.matrix_world @ bone_world.inverted()
             new_matrix = d @ local
-            loc = new_matrix.to_translation()
-            rot = new_matrix.to_euler("YXZ")
+            # The PMX format stores a rigid body *relative to its bone*, but
+            # mmd_tools writes the object's world transform and adds the bone
+            # position again on import - so the object has to carry the
+            # relative transform, otherwise every rigid body ends up one bone
+            # position away from where it belongs.
+            tgt_bone = tgt_arm.data.bones.get(bone)
+            if tgt_bone is not None:
+                tb_world = tgt_arm.matrix_world @ tgt_bone.matrix_local
+                rel = new_matrix @ tb_world.inverted()
+                loc = rel.to_translation()
+                rot = rel.to_euler("YXZ")
+            else:
+                loc = new_matrix.to_translation()
+                rot = new_matrix.to_euler("YXZ")
         else:
             loc = d @ o.matrix_world.translation
             rot_src = o.matrix_world.to_euler("YXZ")
