@@ -67,69 +67,116 @@ def build_rig_map(src_arm: bpy.types.Object, tgt_arm: bpy.types.Object,
 
 def rest_deltas(src_arm: bpy.types.Object, tgt_arm: bpy.types.Object,
                 mapping: dict[str, str]) -> dict[str, Matrix]:
-    """D = M_target @ M_source^-1 for every mapped bone."""
-    S = {b.name: b.matrix_local.copy() for b in src_arm.data.bones}
-    T = {b.name: b.matrix_local.copy() for b in tgt_arm.data.bones}
+    """D = the transform that carries a source bone frame onto a target one.
+
+    The obvious choice - ``M_target @ M_source^-1`` - is wrong: the roll of a
+    bone is an arbitrary authoring decision, and the two models do not agree
+    on it.  Inheriting that difference rotates the garment around the bone
+    axis and throws the part far away (a wrist ended up 1.3 m off).
+
+    So only two things are mapped: where the bone starts and which way it
+    points.  The rotation is the minimal one that aligns the two directions,
+    taken around the bone's own origin:
+
+        D(p) = R(p - head_source) + head_target
+
+    The roll difference is dropped, the anatomical difference is kept.
+    """
+    S = {b.name: b for b in src_arm.data.bones}
+    T = {b.name: b for b in tgt_arm.data.bones}
     out = {}
     for s, t in mapping.items():
-        if s in S and t in T:
-            out[s] = T[t] @ S[s].inverted()
+        if s not in S or t not in T:
+            continue
+        sb, tb = S[s], T[t]
+        d_s = sb.tail_local - sb.head_local
+        d_t = tb.tail_local - tb.head_local
+        if d_s.length < 1e-9 or d_t.length < 1e-9:
+            out[s] = Matrix.Translation(tb.head_local - sb.head_local)
+            continue
+        d_s.normalize()
+        d_t.normalize()
+        rot = d_s.rotation_difference(d_t).to_matrix().to_4x4()
+        out[s] = (Matrix.Translation(tb.head_local)
+                  @ rot
+                  @ Matrix.Translation(-sb.head_local))
     return out
 
 
+def _bone_depth(src_arm: bpy.types.Object, name: str) -> int:
+    depth = 0
+    bone = src_arm.data.bones.get(name)
+    while bone is not None and bone.parent is not None:
+        depth += 1
+        bone = bone.parent
+    return depth
+
+
 def garment_deltas(src_arm: bpy.types.Object, garment_bones: list[str],
-                   deltas: dict[str, Matrix]) -> dict[str, Matrix]:
-    """Delta for a garment-only bone = the delta of its parent.
+                   body_deltas: dict[str, Matrix]) -> dict[str, Matrix]:
+    """Delta for every garment-only bone (skirt / sleeve / ribbon chains).
 
-    A garment bone rides on its parent, so it inherits the parent's mapping.
+    A garment bone rides on its parent, so its new position follows the
+    parent's transform; its own direction is carried over unchanged, which
+    keeps the chain's shape.  The delta therefore maps the source bone frame
+    onto the new one exactly like the body bones do - with the parent's
+    delta alone every bone of a chain would collapse into one transform and
+    the skirt could not swing.
     """
-    S = {b.name: b.matrix_local.copy() for b in src_arm.data.bones}
-    resolved: dict[str, Matrix] = {}
+    S = {b.name: b for b in src_arm.data.bones}
+    out: dict[str, Matrix] = {}
 
-    def resolve(name: str) -> Matrix:
-        if name in resolved:
-            return resolved[name]
-        if name in deltas:
-            resolved[name] = deltas[name]
-            return resolved[name]
-        bone = src_arm.data.bones.get(name)
+    def parent_delta(name: str) -> Matrix:
+        if name in body_deltas:
+            return body_deltas[name]
+        if name in out:
+            return out[name]
+        bone = S.get(name)
         if bone is None or bone.parent is None:
-            resolved[name] = Matrix.Identity(4)
-            return resolved[name]
-        d = resolve(bone.parent.name)
-        resolved[name] = d
-        return d
+            return Matrix.Identity(4)
+        return parent_delta(bone.parent.name)
 
-    out = {}
-    for name in garment_bones:
-        d = resolve(name)
-        resolved[name] = d
-        out[name] = d
+    for name in sorted(garment_bones, key=lambda n: _bone_depth(src_arm, n)):
+        bone = S.get(name)
+        if bone is None or bone.parent is None:
+            continue
+        pd = parent_delta(bone.parent.name)
+        head_s = bone.head_local
+        head_t = pd @ head_s
+        d_s = bone.tail_local - bone.head_local
+        d_t = pd.to_3x3() @ d_s
+        if d_s.length > 1e-9 and d_t.length > 1e-9:
+            rot = d_s.normalized().rotation_difference(
+                d_t.normalized()).to_matrix().to_4x4()
+            out[name] = (Matrix.Translation(head_t)
+                         @ rot
+                         @ Matrix.Translation(-head_s))
+        else:
+            out[name] = Matrix.Translation(head_t - head_s)
     return out
 
 
 def garment_bone_specs(src_arm: bpy.types.Object, garment_bones: list[str],
                        deltas: dict[str, Matrix]) -> list[dict[str, Any]]:
     """Head / tail / parent / roll direction for every garment-only bone."""
-    S = {b.name: b.matrix_local.copy() for b in src_arm.data.bones}
+    S = {b.name: b for b in src_arm.data.bones}
     specs = []
     for name in garment_bones:
-        bone = src_arm.data.bones.get(name)
+        bone = S.get(name)
         if bone is None:
             continue
         parent = bone.parent.name if bone.parent else None
         d = deltas.get(name)
         if d is None or parent is None:
             continue
-        m = d @ S[name]
-        head = m.translation.copy()
-        tail = head + m.to_3x3() @ (bone.tail_local - bone.head_local)
+        head = d @ bone.head_local
+        tail = d @ bone.tail_local
         specs.append({
             "name": name,
             "parent": parent,
             "head": head,
             "tail": tail,
-            "roll_axis": (m.to_3x3() @ Vector((0.0, 0.0, 1.0))).normalized(),
+            "roll_axis": (d.to_3x3() @ Vector((0.0, 0.0, 1.0))).normalized(),
         })
     # parents must exist before their children
     specs.sort(key=lambda s: (s["parent"] in {x["name"] for x in specs}, s["name"]))
@@ -177,6 +224,41 @@ def add_bones(tgt_arm: bpy.types.Object, specs: list[dict[str, Any]]) -> list[st
 # --------------------------------------------------------------------------
 
 
+def apply_positions(me: bpy.types.Mesh, new_positions) -> None:
+    """Set the vertex positions and move every shape key by the same delta.
+
+    Blender keeps the shape key data in its own array, separate from
+    ``mesh.vertices``.  Editing the vertices alone therefore leaves the morphs
+    - and, more importantly, the *evaluated* mesh that the renderer and the
+    PMX exporter actually use - at the old place.  The whole retarget would
+    silently do nothing.
+
+    Moving the shape keys by the same delta keeps the morph effect: the
+    difference between a morph and the basis is unchanged.
+    """
+    old = [v.co.copy() for v in me.vertices]
+    if len(old) != len(new_positions):
+        raise ValueError("position count does not match the vertex count")
+    delta = [n - o for n, o in zip(new_positions, old)]
+    for v, n in zip(me.vertices, new_positions):
+        v.co = n
+    if not me.shape_keys:
+        return
+    moved = False
+    for key in me.shape_keys.key_blocks:
+        buf = [0.0] * (len(me.vertices) * 3)
+        key.data.foreach_get("co", buf)
+        for i, d in enumerate(delta):
+            if d.length_squared == 0.0:
+                continue
+            moved = True
+            buf[3 * i] += d.x
+            buf[3 * i + 1] += d.y
+            buf[3 * i + 2] += d.z
+        key.data.foreach_set("co", buf)
+    me.update()
+
+
 def reskin(garment: bpy.types.Object, deltas: dict[str, Matrix],
            bone_map: dict[str, str]) -> dict[str, Any]:
     """Move the garment into the target rig and rename the vertex groups.
@@ -192,6 +274,7 @@ def reskin(garment: bpy.types.Object, deltas: dict[str, Matrix],
 
     weighted = [0.0] * len(me.vertices)
     zero3 = Matrix.Identity(3) * 0.0
+    new_positions = []
     for v in me.vertices:
         rot = zero3.copy()
         trans = Vector((0.0, 0.0, 0.0))
@@ -207,10 +290,13 @@ def reskin(garment: bpy.types.Object, deltas: dict[str, Matrix],
         if wsum > 0.0:
             if abs(wsum - 1.0) > 1e-4:
                 # PMX weights are normalised on import, but never trust it
-                v.co = (rot @ v.co + trans) / wsum
+                new_positions.append((rot @ v.co + trans) / wsum)
             else:
-                v.co = rot @ v.co + trans
+                new_positions.append(rot @ v.co + trans)
             weighted[v.index] = wsum
+        else:
+            new_positions.append(v.co.copy())
+    apply_positions(me, new_positions)
 
     # rebuild the groups under the mapped names
     new_groups: dict[str, list[tuple[int, float]]] = {}
@@ -496,9 +582,8 @@ def fit_to_body(garment: bpy.types.Object, target_bvh: BVHTree,
             moved += 1
 
     corrections = _smooth_field(corrections, me, iterations=2)
-    for v in me.vertices:
-        c = corrections[v.index]
-        v.co = v.co + Vector(c)
+    new_positions = [v.co + Vector(corrections[v.index]) for v in me.vertices]
+    apply_positions(me, new_positions)
 
     return {"vertices_fitted": moved, "vertices_skipped_far": skipped,
             "max_pull": round(max_dist, 5)}
@@ -577,12 +662,15 @@ def source_coverage(src_body: bpy.types.Object, garment_bvh: BVHTree,
 
 
 def transfer_coverage(target_body: bpy.types.Object, src_body: bpy.types.Object,
-                      covered: dict[int, bool], max_dist: float = 0.04,
+                      covered: dict[int, bool],
+                      max_dist: float = 0.04,
                       z_limit: float = float("inf")) -> list[int]:
     """Map the source coverage onto the target body; return faces to delete.
 
-    The lookup happens per vertex, so the boundary of the hidden area follows
-    the clothes instead of jumping along the source's coarse faces.
+    The lookup happens on the *target's* vertices: every target vertex finds
+    the nearest source body vertex and inherits its covered flag.  A face is
+    only hidden when all of its vertices are covered, so the boundary follows
+    the target's own vertex density and stays conservative at the openings.
     """
     from mathutils.kdtree import KDTree
 
@@ -595,18 +683,21 @@ def transfer_coverage(target_body: bpy.types.Object, src_body: bpy.types.Object,
 
     tme = target_body.data
     tmw = target_body.matrix_world
+    covered_t: dict[int, bool] = {}
+    for v in tme.vertices:
+        co = tmw @ v.co
+        _c, index, dist = kd.find(co)
+        covered_t[v.index] = (index is not None and dist <= max_dist
+                              and covered.get(index, False))
+
     delete = []
     for poly in tme.polygons:
-        center = tmw @ poly.center
-        if center.z > z_limit:
+        if (tmw @ poly.center).z > z_limit:
             continue
-        _co, index, dist = kd.find(center)
-        if index is None or dist > max_dist:
-            continue
-        if covered.get(index, False):
+        vs = poly.vertices
+        if vs and all(covered_t.get(i, False) for i in vs):
             delete.append(poly.index)
     return delete
-
 
 _CONTAIN_DIRS = (
     Vector((0.0, 0.0, 1.0)), Vector((0.0, 0.0, -1.0)),
@@ -650,6 +741,75 @@ def hair_inside_garment(target_body: bpy.types.Object, garment_bvh: BVHTree,
         if inside_garment(garment_bvh, center):
             doomed.append(fi)
     return doomed
+
+
+def _is_transparent(mat: bpy.types.Material | None) -> bool:
+    """Is this MMD material see-through?
+
+    Body under a transparent garment has to stay: deleting it would make the
+    cloth look hollow instead of showing the skin through the fabric.
+    """
+    if mat is None:
+        return True
+    try:
+        mmd = mat.mmd_material
+        if getattr(mmd, "alpha_mode", "OPAQUE") == "BLEND":
+            return True
+        if getattr(mmd, "alpha", 1.0) < 0.99:
+            return True
+    except Exception:
+        pass
+    try:
+        if mat.blend_method in ('BLEND', 'HASHED', 'CLIP'):
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def mask_by_garment(target_body: bpy.types.Object, garment: bpy.types.Object,
+                    garment_bvh: BVHTree, max_dist: float = 0.015
+                    ) -> tuple[list[int], int]:
+    """Hide the body that the clothes actually cover.
+
+    Now that the garment really sits on the base body (the fit pulled the
+    tight areas onto it), the covered body can be found directly: a body
+    point is covered when a piece of *opaque* cloth sits just outside it,
+    along the body normal.
+
+    The earlier approach measured the coverage on the source model and
+    transferred it, which misfired on the ribbons hanging next to the legs:
+    they are in front of the leg, so the leg counted as covered and a hole
+    appeared.  Here the distance also has to be small, so a ribbon a few
+    centimetres away does not count.
+    """
+    me = target_body.data
+    mw = target_body.matrix_world
+    gme = garment.data
+    covered_v: dict[int, bool] = {}
+    for v in me.vertices:
+        co = mw @ v.co
+        n = (mw.to_3x3() @ v.normal).normalized()
+        loc, _nrm, idx, dist = garment_bvh.find_nearest(co)
+        if loc is None or dist > max_dist:
+            covered_v[v.index] = False
+            continue
+        if (loc - co).dot(n) <= 0.0:
+            covered_v[v.index] = False
+            continue
+        gmat = None
+        if idx is not None and idx < len(gme.polygons):
+            mi = gme.polygons[idx].material_index
+            if mi < len(gme.materials):
+                gmat = gme.materials[mi]
+        covered_v[v.index] = not _is_transparent(gmat)
+
+    doomed = []
+    for poly in me.polygons:
+        vs = poly.vertices
+        if vs and all(covered_v.get(i, False) for i in vs):
+            doomed.append(poly.index)
+    return doomed, sum(1 for c in covered_v.values() if c)
 
 
 def neck_height(armature: bpy.types.Object) -> float:
@@ -703,6 +863,10 @@ DEFAULT_CONFIG = {
     },
     "body_mask": {
         "enabled": True,
+        # "direct" measures the coverage on the target itself, "source"
+        # measures it on the source model and transfers it
+        "method": "source",
+        "cover_dist": 0.012,
         "max_dist": 0.08,
         "hair_max_dist": 0.04,
         "hair": True,
@@ -894,18 +1058,34 @@ def run(src_objs: list[bpy.types.Object], tgt_objs: list[bpy.types.Object],
     mask_stats = {"enabled": cfg["body_mask"]["enabled"], "deleted_faces": 0}
     if cfg["body_mask"]["enabled"] and cloth:
         garment_bvh = build_bvh(cloth[0])
-        # the source body: everything that is neither hair, face nor the
-        # clothing itself - that is the skin the clothes may cover
-        cloth_face_set = set(cloth_faces.get(src_body.name, []))
-        src_skin_faces = [fi for fi in body_faces(src_body, skip_hair=True,
-                                                   skip_face=True)
-                          if fi not in cloth_face_set]
-        coverage = source_coverage(src_body, garment_bvh, src_skin_faces,
-                                   margin=cfg["body_mask"].get("margin", 1))
-        to_delete = transfer_coverage(tgt_body_meshes[0], src_body, coverage,
-                                      max_dist=cfg["body_mask"]["max_dist"],
-                                      z_limit=neck_height(tgt_arm))
-        mask_stats["source_covered_faces"] = sum(1 for v in coverage.values() if v)
+        method = cfg["body_mask"].get("method", "direct")
+        if method == "source":
+            # the source body: everything that is neither hair, face nor the
+            # clothing itself - that is the skin the clothes may cover
+            cloth_face_set = set(cloth_faces.get(src_body.name, []))
+            src_skin_faces = [fi for fi in body_faces(src_body, skip_hair=True,
+                                                       skip_face=True)
+                              if fi not in cloth_face_set]
+            coverage = source_coverage(src_body, garment_bvh, src_skin_faces,
+                                       max_dist=cfg["body_mask"].get("cover_dist", 0.012),
+                                       margin=cfg["body_mask"].get("margin", 1))
+            to_delete = transfer_coverage(tgt_body_meshes[0], src_body, coverage,
+                                          max_dist=cfg["body_mask"]["max_dist"],
+                                          z_limit=neck_height(tgt_arm))
+            mask_stats["source_covered_faces"] = sum(1 for v in coverage.values()
+                                                     if v)
+        else:
+            # direct: the body that the clothes really cover on the target
+            to_delete, covered_points = mask_by_garment(
+                tgt_body_meshes[0], cloth[0], garment_bvh,
+                max_dist=cfg["body_mask"].get("cover_dist", 0.015))
+            z_limit = neck_height(tgt_arm)
+            to_delete = [fi for fi in to_delete
+                         if (tgt_body_meshes[0].matrix_world
+                             @ tgt_body_meshes[0].data.polygons[fi].center).z
+                         <= z_limit]
+            mask_stats["covered_points"] = covered_points
+            mask_stats["method"] = "direct"
         mask_stats["deleted_faces"] = delete_faces(tgt_body_meshes[0], to_delete)
 
         if cfg["body_mask"].get("hair", True):
