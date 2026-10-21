@@ -388,15 +388,15 @@ def physics_motion_check(objects: list[bpy.types.Object], motions: str,
     results = []
     for f in range(first_frame, last_frame + 1, 15):
         physics_sim.run(scene, f, f)
+        bpy.context.view_layer.update()
         bme, bev = _evaluated_mesh(bmesh_obj)
         gme, gev = _evaluated_mesh(gmesh)
         pierced, checked, hits = motion_mod._pierce_count(
             motion_mod._bvh_from(bme, split["skin_faces"]),
             motion_mod._bvh_from(gme, split["garment_faces"]),
             bme, split["skin_faces"], rest_sign, stride=3)
-        bev.to_mesh_clear()
-        if gev is not bev:
-            gev.to_mesh_clear()
+        # the evaluated meshes must not be freed here: the depsgraph still
+        # refers to them and the next iteration would read a dead mesh
         regions: dict[str, int] = {}
         for i in hits:
             key = body_region(dom[i]) if i < len(dom) else "other"
