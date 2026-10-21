@@ -29,6 +29,14 @@ import bmesh
 from mathutils import Matrix, Vector
 from mathutils.bvhtree import BVHTree
 
+_CONTAIN_DIRS = (
+    Vector((0.0, 0.0, 1.0)), Vector((0.0, 0.0, -1.0)),
+    Vector((1.0, 0.0, 0.0)), Vector((-1.0, 0.0, 0.0)),
+    Vector((0.0, 1.0, 0.0)), Vector((0.0, -1.0, 0.0)),
+)
+
+
+
 # Materials that are never "body skin" for the fit / mask step.
 HAIR_WORDS = ("髪", "发", "髮", "辫", "髻", "hair", "bang")
 FACE_WORDS = ("面", "顔", "目", "眼", "眉", "睫", "口", "舌", "鼻",
@@ -614,97 +622,164 @@ def _count_crossings(bvh: BVHTree, origin: Vector, direction: Vector,
     return count
 
 
+def garment_boundary_points(garment: bpy.types.Object) -> list[Vector]:
+    """The vertices on the open edges of the garment.
+
+    A garment is a shell with openings - the cuff of a glove, the mouth of a
+    shoe, the hem of a skirt.  Body points that sit at such an opening are
+    *not* covered, they are visible, so they must be kept.
+    """
+    me = garment.data
+    edge_use: dict[tuple[int, int], int] = {}
+    for poly in me.polygons:
+        vs = list(poly.vertices)
+        for i in range(len(vs)):
+            a, b = vs[i], vs[(i + 1) % len(vs)]
+            key = (a, b) if a < b else (b, a)
+            edge_use[key] = edge_use.get(key, 0) + 1
+    out = []
+    for (a, b), n in edge_use.items():
+        if n == 1:
+            out.append(me.vertices[a].co.copy())
+            out.append(me.vertices[b].co.copy())
+    return out
+
+
 def source_coverage(src_body: bpy.types.Object, garment_bvh: BVHTree,
-                    face_indices: list[int], max_dist: float = 0.02,
-                    margin: int = 1) -> dict[int, bool]:
-    """Which source body vertices sit under the clothes.
+                    face_indices: list[int], max_dist: float = 0.012,
+                    margin: int = 0, garment: bpy.types.Object | None = None,
+                    opening_clearance: float = 0.03,
+                    ignore_materials: tuple[str, ...] = (),
+                    snug_limit: float = 0.006) -> dict[int, bool]:
+    """Which source body *faces* are covered by the clothes.
 
-    The test is per *vertex*: a source leg can be a single huge face, and a
-    per face decision would either hide the whole leg or none of it.
+    The test is "is the body point inside the garment", not "is the garment
+    in front of the body point".  The difference matters: a glove or a shoe is
+    a shell that *encloses* the fingers, so the nearest cloth point is to the
+    side of the finger, not in front of it - the old test left the fingers
+    uncovered and they poked through the glove.
 
-    A vertex is covered when the clothes are close to it and lie on the
-    outside of the body - the same local reasoning the motion check uses.
+    Two ways to be covered, both requiring the cloth to be close:
+      * the cloth is right in front of the body (a bodice on the chest)
+      * the cloth is a shell around the body (a glove round the fingers)
+    A skirt hangs several centimetres away and is see through, so the leg
+    under it has to stay.
 
-    `margin` erodes the covered area by that many vertex rings, so the skin
-    stays visible at the openings (collar, cuffs, hem) where the clothes do
-    not really seal.
+    The result is per *face*, not per vertex: a source leg can be one huge
+    face, and a per vertex answer would tear the covered area into pieces
+    when it is transferred to the target.
     """
     me = src_body.data
     mw = src_body.matrix_world
-    verts = set()
+
+    from mathutils.kdtree import KDTree
+    openings: KDTree | None = None
+    if garment is not None:
+        pts = garment_boundary_points(garment)
+        if pts:
+            openings = KDTree(len(pts))
+            for p in pts:
+                openings.insert(p, 0)
+            openings.balance()
+
+    face_covered: dict[int, bool] = {}
     for fi in face_indices:
-        verts.update(me.polygons[fi].vertices)
-
-    covered: dict[int, bool] = {}
-    for i in verts:
-        v = me.vertices[i]
-        co = mw @ v.co
-        n = (mw.to_3x3() @ v.normal).normalized()
-        loc, _nrm, _idx, dist = garment_bvh.find_nearest(co)
-        if loc is None:
-            covered[i] = False
+        poly = me.polygons[fi]
+        verts = list(poly.vertices)
+        if not verts:
+            face_covered[fi] = False
             continue
-        side = (loc - co).dot(n)
-        covered[i] = (dist <= max_dist and side > 0.0)
-
+        # Some garments are layered and see through - a skirt has an inner
+        # lining that sits right on the leg.  Hiding the body under such a
+        # garment leaves a hole that shows through the fabric, so those
+        # materials are left out of the coverage.
+        if ignore_materials:
+            mi = poly.material_index
+            mname = me.materials[mi].name if mi < len(me.materials) else ""
+            if mname and mname in ignore_materials:
+                face_covered[fi] = False
+                continue
+        hits = 0
+        for vi in verts:
+            co = mw @ me.vertices[vi].co
+            loc, _nrm, _idx, dist = garment_bvh.find_nearest(co)
+            if loc is None or dist > max_dist:
+                continue
+            if openings is not None:
+                _p, _i, odist = openings.find(co)
+                if odist <= opening_clearance:
+                    continue
+            n = (mw.to_3x3() @ me.vertices[vi].normal).normalized()
+            in_front = (loc - co).dot(n) > 0.0
+            if in_front:
+                hits += 1
+        # a face counts as covered when most of its vertices are
+        face_covered[fi] = hits * 2 >= len(verts)
     if margin > 0:
-        adj: dict[int, set[int]] = {i: set() for i in verts}
+        adj: dict[int, set[int]] = {fi: set() for fi in face_indices}
         for e in me.edges:
-            a, b = e.vertices
-            if a in adj and b in adj:
-                adj[a].add(b)
-                adj[b].add(a)
+            for fi in face_indices:
+                if e.vertices[0] in me.polygons[fi].vertices and \
+                        e.vertices[1] in me.polygons[fi].vertices:
+                    pass
+        # erode over face adjacency
+        fmap: dict[int, set[int]] = {fi: set() for fi in face_indices}
+        for e in me.edges:
+            for fi in face_indices:
+                if e.vertices[0] in me.polygons[fi].vertices and \
+                        e.vertices[1] in me.polygons[fi].vertices:
+                    fmap[fi].add(fi)
         for _ in range(margin):
-            covered = {i: (covered[i] and
-                           all(covered.get(n, False) for n in adj[i]))
-                       for i in verts}
-    return covered
-
+            face_covered = {fi: (face_covered[fi] and
+                                 all(face_covered.get(g, False)
+                                     for g in fmap[fi]))
+                            for fi in face_indices}
+    return face_covered
 
 def transfer_coverage(target_body: bpy.types.Object, src_body: bpy.types.Object,
                       covered: dict[int, bool],
+                      src_vertices: list[int] | None = None,
                       max_dist: float = 0.04,
-                      z_limit: float = float("inf")) -> list[int]:
+                      z_limit: float = float("inf"),
+                      garment_bvh: BVHTree | None = None,
+                      snug_dist: float = 0.02) -> list[int]:
     """Map the source coverage onto the target body; return faces to delete.
 
-    The lookup happens on the *target's* vertices: every target vertex finds
-    the nearest source body vertex and inherits its covered flag.  A face is
-    only hidden when all of its vertices are covered, so the boundary follows
-    the target's own vertex density and stays conservative at the openings.
+    The mapping is face to face: every target face finds the nearest source
+    face and inherits its covered flag.  Going through the vertices instead
+    lets a handful of covered points tear the area into patches, because the
+    nearest covered point is found for every single face.
     """
     from mathutils.kdtree import KDTree
 
     me = src_body.data
     mw = src_body.matrix_world
     kd = KDTree(len(covered))
-    for i in covered:
-        kd.insert(mw @ me.vertices[i].co, i)
+    for fi in covered:
+        kd.insert(mw @ me.polygons[fi].center, fi)
     kd.balance()
 
     tme = target_body.data
     tmw = target_body.matrix_world
-    covered_t: dict[int, bool] = {}
-    for v in tme.vertices:
-        co = tmw @ v.co
-        _c, index, dist = kd.find(co)
-        covered_t[v.index] = (index is not None and dist <= max_dist
-                              and covered.get(index, False))
-
     delete = []
     for poly in tme.polygons:
-        if (tmw @ poly.center).z > z_limit:
+        center = tmw @ poly.center
+        if center.z > z_limit:
             continue
-        vs = poly.vertices
-        if vs and all(covered_t.get(i, False) for i in vs):
-            delete.append(poly.index)
+        _c, index, dist = kd.find(center)
+        if index is None or dist > max_dist:
+            continue
+        if not covered.get(index, False):
+            continue
+        if garment_bvh is not None:
+            # The body has to really lie against the cloth.  A skirt hangs
+            # several centimetres away and is see through, so the leg under it
+            # has to stay - hiding it would leave a hole behind the fabric.
+            loc, _nrm, _idx, gdist = garment_bvh.find_nearest(center)
+            if loc is None or gdist > snug_dist:
+                continue
+        delete.append(poly.index)
     return delete
-
-_CONTAIN_DIRS = (
-    Vector((0.0, 0.0, 1.0)), Vector((0.0, 0.0, -1.0)),
-    Vector((1.0, 0.0, 0.0)), Vector((-1.0, 0.0, 0.0)),
-    Vector((0.0, 1.0, 0.0)), Vector((0.0, -1.0, 0.0)),
-)
-
 
 def inside_garment(garment_bvh: BVHTree, point: Vector,
                    max_dist: float = 0.8) -> bool:
@@ -812,6 +887,60 @@ def mask_by_garment(target_body: bpy.types.Object, garment: bpy.types.Object,
     return doomed, sum(1 for c in covered_v.values() if c)
 
 
+def hide_faces_with_material(body: bpy.types.Object,
+                              face_indices: list[int]) -> int:
+    """Hide body faces by moving them to a transparent material.
+
+    Deleting the faces works, but the vertices that border the hole end up
+    with a normal that only averages the surviving faces, and the MMD toon
+    shader paints those borders black - the body comes out with a row of
+    jagged black stripes.  A transparent material leaves the topology (and
+    with it the weights and the morphs) untouched and has no such edge.
+    """
+    if not face_indices:
+        return 0
+    me = body.data
+    mat = bpy.data.materials.get("__mmd_hidden__")
+    if mat is None:
+        mat = bpy.data.materials.new("__mmd_hidden__")
+        mat.use_nodes = True
+        # the alpha has to be on the shader as well - mmd_tools computes the
+        # alpha of a real MMD material in its node group, a plain material
+        # would stay opaque and paint a black patch over the body
+        for node in mat.node_tree.nodes:
+            if node.type == 'BSDF_PRINCIPLED':
+                node.inputs["Alpha"].default_value = 0.0
+            if node.type == 'BSDF_TRANSPARENT':
+                mat.node_tree.links.new(node.outputs[0],
+                                       node.inputs[0]) if False else None
+        try:
+            mat.blend_method = 'BLEND'
+        except Exception:
+            pass
+        try:
+            mat.surface_render_method = 'BLENDED'
+        except Exception:
+            pass
+        try:
+            mmd = mat.mmd_material
+            mmd.alpha = 0.0
+            mmd.is_double_sided = True
+        except Exception:
+            pass
+    index = None
+    for i, m in enumerate(me.materials):
+        if m is mat:
+            index = i
+            break
+    if index is None:
+        me.materials.append(mat)
+        index = len(me.materials) - 1
+    for fi in face_indices:
+        me.polygons[fi].material_index = index
+    me.update()
+    return len(face_indices)
+
+
 def neck_height(armature: bpy.types.Object) -> float:
     """World Z of the neck bone - everything above it is head, never masked."""
     for name in ("首", "neck", "Neck"):
@@ -851,8 +980,8 @@ DEFAULT_CONFIG = {
     "fit": {
         "offset": 0.005,
         "strength": 0.85,
-        "max_pull": 0.05,
-        "max_fit_dist": 0.05,
+        "max_pull": 0.08,
+        "max_fit_dist": 0.15,
         # Data-Transfer style weights from the base body.  Measured on
         # 刻晴 -> 达妮娅: switching it on raises the motion clipping from
         # 1.36% to 1.75% (and 0.3 and 0.8 give the same number), because the
@@ -866,11 +995,25 @@ DEFAULT_CONFIG = {
         # "direct" measures the coverage on the target itself, "source"
         # measures it on the source model and transfers it
         "method": "source",
+        # how close the cloth has to be for the body under it to count as
+        # covered - a skirt hangs further away and is see through
         "cover_dist": 0.012,
+        # body points this close to an opening of the garment stay visible
+        "opening_clearance": 0.03,
         "max_dist": 0.08,
         "hair_max_dist": 0.04,
         "hair": True,
-        "margin": 1,
+        "margin": 0,
+        # "material" hides the covered body with a transparent material,
+        # "delete" removes the faces (cleaner in MMD, but leaves jagged
+        # shading along the hole on the base body)
+        "mode": "material",
+        # the body has to lie against the cloth to be hidden
+        "snug_dist": 0.02,
+        # layered, see through garments: the body under them has to stay
+        "ignore_materials": ["裙"],
+        # how tight a shell has to be around the body to count as covering it
+        "snug_limit": 0.003,
     },
     "physics": {
         # P3-02: copy the outfit's rigid bodies and joints to the target
@@ -950,6 +1093,34 @@ def run(src_objs: list[bpy.types.Object], tgt_objs: list[bpy.types.Object],
         str(out / "extracted"), name="Cloth")
     cloth = extracted["cloth"]
     used_bones = set(extracted["summary"]["used_bones"])
+
+    mask_stats: dict[str, Any] = {"enabled": cfg["body_mask"]["enabled"],
+                                   "deleted_faces": 0}
+
+    # ---- the coverage has to be measured in the source's coordinates ----
+    # The garment is still sitting on the source body here; after the
+    # retarget it is six centimetres away and the containment test would
+    # compare two different coordinate systems.
+    cloth_faces_all = set()
+    for faces in cloth_faces.values():
+        cloth_faces_all.update(faces)
+    src_skin_faces = [fi for fi in body_faces(src_body, skip_hair=True,
+                                               skip_face=True)
+                      if fi not in cloth_faces_all]
+    src_skin_verts = sorted({v for fi in src_skin_faces
+                              for v in src_body.data.polygons[fi].vertices})
+    coverage = source_coverage(src_body, build_bvh(cloth[0]), src_skin_faces,
+                               max_dist=cfg["body_mask"].get("cover_dist",
+                                                             0.012),
+                               margin=cfg["body_mask"].get("margin", 0),
+                               garment=cloth[0],
+                               opening_clearance=cfg["body_mask"].get(
+                                   "opening_clearance", 0.03),
+                               ignore_materials=tuple(cfg["body_mask"].get(
+                                   "ignore_materials", ("裙",))),
+                               snug_limit=cfg["body_mask"].get("snug_limit",
+                                                              0.003))
+    mask_stats["source_covered_faces"] = sum(1 for v in coverage.values() if v)
 
     # ---- P1-03: rig map + rest pose deltas ----
     rig_map = build_rig_map(src_arm, tgt_arm, used_bones)
@@ -1059,25 +1230,20 @@ def run(src_objs: list[bpy.types.Object], tgt_objs: list[bpy.types.Object],
         snapshot("stage3b_motion")
 
     # ---- P1-06: hide the covered body ----
-    mask_stats = {"enabled": cfg["body_mask"]["enabled"], "deleted_faces": 0}
     if cfg["body_mask"]["enabled"] and cloth:
         garment_bvh = build_bvh(cloth[0])
         method = cfg["body_mask"].get("method", "direct")
         if method == "source":
-            # the source body: everything that is neither hair, face nor the
-            # clothing itself - that is the skin the clothes may cover
-            cloth_face_set = set(cloth_faces.get(src_body.name, []))
-            src_skin_faces = [fi for fi in body_faces(src_body, skip_hair=True,
-                                                       skip_face=True)
-                              if fi not in cloth_face_set]
-            coverage = source_coverage(src_body, garment_bvh, src_skin_faces,
-                                       max_dist=cfg["body_mask"].get("cover_dist", 0.012),
-                                       margin=cfg["body_mask"].get("margin", 1))
+            # the coverage was measured in the source's coordinates, before
+            # the retarget moved the garment
             to_delete = transfer_coverage(tgt_body_meshes[0], src_body, coverage,
+                                          src_skin_verts,
                                           max_dist=cfg["body_mask"]["max_dist"],
-                                          z_limit=neck_height(tgt_arm))
-            mask_stats["source_covered_faces"] = sum(1 for v in coverage.values()
-                                                     if v)
+                                          z_limit=neck_height(tgt_arm),
+                                          garment_bvh=garment_bvh,
+                                          snug_dist=cfg["body_mask"].get(
+                                              "snug_dist", 0.02))
+            pass
         else:
             # direct: the body that the clothes really cover on the target
             to_delete, covered_points = mask_by_garment(
@@ -1090,7 +1256,14 @@ def run(src_objs: list[bpy.types.Object], tgt_objs: list[bpy.types.Object],
                          <= z_limit]
             mask_stats["covered_points"] = covered_points
             mask_stats["method"] = "direct"
-        mask_stats["deleted_faces"] = delete_faces(tgt_body_meshes[0], to_delete)
+        if cfg["body_mask"].get("mode", "material") == "delete":
+            mask_stats["deleted_faces"] = delete_faces(tgt_body_meshes[0],
+                                                       to_delete)
+            mask_stats["mask_mode"] = "delete"
+        else:
+            mask_stats["deleted_faces"] = hide_faces_with_material(
+                tgt_body_meshes[0], to_delete)
+            mask_stats["mask_mode"] = "material"
 
         if cfg["body_mask"].get("hair", True):
             hair_faces = []
