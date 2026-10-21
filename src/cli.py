@@ -103,6 +103,10 @@ def _cmd_qa(args) -> int:
         argv += ["--motions", args.motions]
     if args.out:
         argv += ["--out", args.out]
+    if getattr(args, "physics", False):
+        argv += ["--physics"]
+    if getattr(args, "break_collision", False):
+        argv += ["--break-collision"]
     res = blender_env.run_in_blender(
         "scripts/blender_runner.py", argv, blender=args.blender)
     blender_env.print_json(res)
@@ -177,6 +181,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--out", default=None,
                    help="output dir; manifest.json here tells QA which "
                         "materials belong to the garment")
+    p.add_argument("--physics", action="store_true",
+                   help="run the MMD physics while measuring the clipping")
+    p.add_argument("--break-collision", action="store_true",
+                   help="with --physics: switch the outfit off the body's "
+                        "limbs again (the state before the collision groups "
+                        "were translated)")
     p.set_defaults(func=_cmd_qa)
     return ap
 
