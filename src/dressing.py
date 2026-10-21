@@ -872,6 +872,10 @@ DEFAULT_CONFIG = {
         "hair": True,
         "margin": 1,
     },
+    "physics": {
+        # P3-02: copy the outfit's rigid bodies and joints to the target
+        "enabled": True,
+    },
     "motion": {
         # Off by default on purpose: the pose suite has to evaluate and
         # temporarily modify the rig, and that must never touch the model
@@ -1108,6 +1112,17 @@ def run(src_objs: list[bpy.types.Object], tgt_objs: list[bpy.types.Object],
 
     snapshot("stage4_masked")
 
+    # ---- P3-02: migrate the outfit physics ----
+    physics_stats: dict[str, Any] = {"enabled": cfg["physics"]["enabled"]}
+    if cfg["physics"]["enabled"] and cloth:
+        from . import physics as physics_mod
+        physics_stats.update(physics_mod.migrate_physics(
+            src_objs, list(tgt_objs) + list(cloth), src_arm, tgt_arm,
+            all_deltas, set(rig_map["garment_bones"])))
+        physics_stats["enabled"] = True
+    else:
+        physics_stats["enabled"] = False
+
     # ---- P1-07: export ----
     # the source model must not end up in the exported file
     for o in list(src_objs):
@@ -1138,6 +1153,7 @@ def run(src_objs: list[bpy.types.Object], tgt_objs: list[bpy.types.Object],
         "fit": {**fit_stats, **reweight_stats, **cfg["fit"]},
         "mask": mask_stats,
         "motion": motion_stats,
+        "physics": physics_stats,
         "export": export,
     }
     (out / "manifest.json").write_text(
@@ -1171,6 +1187,7 @@ def run(src_objs: list[bpy.types.Object], tgt_objs: list[bpy.types.Object],
         "fit": manifest["fit"],
         "mask": mask_stats,
         "motion": motion_stats,
+        "physics": physics_stats,
         "reskin": reskin_stats,
         "selected_materials": selection.get("selected_materials", []),
         "stage_images": stage_images,
@@ -1221,6 +1238,13 @@ def _report(manifest: dict[str, Any]) -> dict[str, Any]:
     mask = manifest["mask"]
     add("body_mask", "OK" if mask.get("deleted_faces") else "WARNING",
         f"{mask.get('deleted_faces', 0)} body faces hidden")
+    phys = manifest.get("physics", {})
+    if phys.get("enabled") and phys.get("rigid_bodies"):
+        add("outfit_physics", "OK",
+            f"{phys['rigid_bodies']} rigid bodies and {phys['joints']} joints "
+            f"migrated to the target")
+    elif phys.get("enabled"):
+        add("outfit_physics", "WARNING", phys.get("skipped", "nothing migrated"))
     motion = manifest.get("motion", {})
     if motion.get("enabled"):
         before = motion.get("before", {})
