@@ -574,20 +574,67 @@ def fit_limb_ends(garment: bpy.types.Object, target_body: bpy.types.Object,
 
 
 # --------------------------------------------------------------------------
-# Finger sleeves and shoes: keep the clearance the outfit was built with
+# Hand and foot: lay the glove and the shoe back onto the base body
 # --------------------------------------------------------------------------
 
-# The bones that carry the fingers and the toes.  The outfit was modelled on
-# a smaller hand and foot than the base body has, so the fingers push
-# through the finger sleeves and the foot bulges out of the shoe.
-TIP_BONES = (
+# 刻晴's glove and shoe are not shells that sit around her fingers and toes:
+# they *are* her finger and toe surfaces, painted with the outfit material
+# (the measurement says so - every garment vertex of the hand and foot region
+# lies exactly on the source body, and the face counts show the material is
+# doubled on the same vertices, so there is no thickness to preserve).
+#
+# 达妮娅's fingers are about 1.4x thicker and her toes reach further, so
+# after the retarget the whole glove is buried inside her hand and her toes
+# stick out in front of the shoe.  The only correct fix is to put the glove and
+# the shoe back onto the base body's own hand and foot surface - the same
+# relative coverage the outfit had on its own body.
+
+HAND_BONE_NAMES = frozenset({
+    "手首", "手捩", "手捩1", "手捩2",
     "親指０", "親指１", "親指２",
     "人指１", "人指２", "人指３",
     "中指１", "中指２", "中指３",
     "薬指１", "薬指２", "薬指３",
     "小指１", "小指２", "小指３",
-    "つま先", "足先EX",
-)
+})
+
+FOOT_BONE_NAMES = frozenset({
+    "足首", "足首D", "足D", "足D++", "足先EX", "つま先", "足先",
+    "足親指０", "足親指１",
+    "足人指１", "足人指２", "足中指１", "足中指２",
+    "足薬指１", "足薬指２", "足小指１", "足小指２",
+})
+
+
+def _bone_base(name: str) -> str:
+    """'人指１.L' -> '人指１'."""
+    if "." in name:
+        return name.rpartition(".")[0]
+    if name.endswith("_L") or name.endswith("_R"):
+        return name[:-2]
+    return name
+
+
+def _bone_side(name: str) -> str:
+    """'人指１.L' -> 'L', '' when the bone carries no side."""
+    if "." in name:
+        side = name.rpartition(".")[2]
+        return side if side in ("L", "R") else ""
+    if name.endswith("_L"):
+        return "L"
+    if name.endswith("_R"):
+        return "R"
+    return ""
+
+
+def limb_region(name: str) -> str | None:
+    """'hand' / 'foot' for a bone name, None when the bone is neither."""
+    base = _bone_base(name)
+    if base in HAND_BONE_NAMES:
+        return "hand"
+    if base in FOOT_BONE_NAMES:
+        return "foot"
+    return None
 
 
 AUX_GROUPS = ("mmd_", "UV_", "_")
@@ -614,59 +661,283 @@ def dominant_bones(mesh_obj: bpy.types.Object) -> list[str]:
     return out
 
 
-def tip_clearances(garment: bpy.types.Object, src_bvh: BVHTree,
-                   tip_bones=TIP_BONES) -> dict[int, float]:
-    """How far the finger sleeves and the shoes stand off the source body.
-
-    Measured before the retarget, while the outfit still sits on the source
-    body.  The same clearance is reproduced on the base body, so the sleeves
-    keep their thickness instead of being flattened onto the skin.
-    """
-    dom = dominant_bones(garment)
-    out: dict[int, float] = {}
-    for i, name in enumerate(dom):
-        if name.split(".")[0] not in tip_bones:
-            continue
-        loc, _n, _idx, dist = src_bvh.find_nearest(garment.data.vertices[i].co)
-        if loc is not None:
-            out[i] = max(dist, 0.0)
+def limb_regions(mesh_obj: bpy.types.Object) -> list[str | None]:
+    """'hand_L' / 'foot_R' for every vertex, None where the limb is unknown."""
+    out = []
+    for name in dominant_bones(mesh_obj):
+        region = limb_region(name)
+        side = _bone_side(name) if region else ""
+        out.append(f"{region}_{side}" if region and side else None)
     return out
 
 
-def apply_tip_fit(garment: bpy.types.Object, tgt_bvh: BVHTree,
-                  clearances: dict[int, float]) -> int:
-    """Move the finger sleeves and the shoes onto the base body's limbs.
+def _vertex_limb(mesh_obj: bpy.types.Object, min_weight: float) -> list[str | None]:
+    """The hand / foot a body vertex belongs to, by the bones that drive it."""
+    names = [vg.name for vg in mesh_obj.vertex_groups]
+    out: list[str | None] = []
+    for v in mesh_obj.data.vertices:
+        key = None
+        for g in v.groups:
+            name = names[g.group]
+            if name.startswith(AUX_GROUPS) or g.weight < min_weight:
+                continue
+            region = limb_region(name)
+            side = _bone_side(name) if region else ""
+            if region and side:
+                key = f"{region}_{side}"
+                break
+        out.append(key)
+    return out
 
-    A vertex that ended up inside the base body (or closer to it than the
-    clearance it was modelled with) is pushed back out to the clearance it
-    had on the source body.  Only the vertices that follow a finger or a toe
-    bone are touched, so the sleeve and the rest of the outfit keep their
-    shape.
+
+def limb_bvhs(body_meshes: list[bpy.types.Object],
+              min_weight: float = 0.3) -> dict[str, BVHTree]:
+    """One BVH per hand and foot, from the body faces the limb bones drive.
+
+    The whole body cannot be searched: in an A-pose the hands hang right next
+    to the skirt, so the nearest surface to a finger is often a fold of the
+    skirt.  Each limb therefore gets its own tree, and only the body parts the
+    hand and foot bones actually drive end up in it.
+    """
+    verts: list = []
+    polys: dict[str, list[list[int]]] = {}
+    for obj in body_meshes:
+        me = obj.data
+        mw = obj.matrix_world
+        base = len(verts)
+        verts.extend([mw @ v.co for v in me.vertices])
+        keys = _vertex_limb(obj, min_weight)
+        for p in me.polygons:
+            found = {keys[i] for i in p.vertices}
+            if len(found) != 1:
+                continue
+            key = found.pop()
+            if key is None:
+                continue
+            polys.setdefault(key, []).append([i + base for i in p.vertices])
+    return {key: BVHTree.FromPolygons(verts, faces, all_triangles=False,
+                                       epsilon=0.0)
+            for key, faces in polys.items()}
+
+
+def fit_limb_regions(garment: bpy.types.Object, tgt_bvhs: dict[str, BVHTree],
+                     margin: float = 0.003, max_dist: float = 0.05,
+                     near_dist: float = 0.004, rounds: int = 4,
+                     max_push: float = 0.012) -> dict[str, Any]:
+    """Lay the glove and the shoe back onto the base body's hand and foot.
+
+    A vertex that ended up *inside* the base body - or within a few
+    millimetres of it - is moved onto the surface plus a small margin, so the
+    glove ends up around the base body's fingers instead of buried in them.
+    Everything that sits away from the body (the heel of a shoe, the frill of a
+    cuff) keeps its shape.
+
+    The base body is modelled in far more detail than the outfit, so a face of
+    the outfit that is laid on the surface still chords across a finger web or
+    the arch of a foot and dips back into the skin.  Those faces are measured
+    and the outfit is inflated around them.  The inflation is a *vector* field
+    that is smoothed over the mesh, so the glove bulges like a real glove
+    instead of tearing into spikes.
     """
     me = garment.data
+    regions = limb_regions(garment)
     positions = []
-    moved = 0
+    stats: dict[str, Any] = {"moved": 0, "regions": {}}
     for i, v in enumerate(me.vertices):
-        clr = clearances.get(i)
-        if clr is None:
+        key = regions[i]
+        bvh = tgt_bvhs.get(key) if key else None
+        if bvh is None:
             positions.append(v.co)
             continue
-        loc, nrm, _idx, dist = tgt_bvh.find_nearest(v.co)
-        if loc is None or nrm.length < 1e-6:
+        loc, nrm, _idx, dist = bvh.find_nearest(v.co)
+        if loc is None or nrm.length < 1e-6 or dist > max_dist:
             positions.append(v.co)
             continue
-        # Only the vertices that actually went *inside* the base body are
-        # pushed back out.  The inner side of a shoe is close to the foot
-        # but still outside it - moving that as well would flatten the shoe
-        # into a single layer.
-        side = (v.co - loc).dot(nrm)
-        if side >= 0.0 or dist > 0.05:
+        # outside the surface and not touching it -> the piece is fine
+        if (v.co - loc).dot(nrm) >= 0.0 and dist > near_dist:
             positions.append(v.co)
             continue
-        positions.append(loc + nrm * clr)
-        moved += 1
+        positions.append(loc + nrm * margin)
+        stats["moved"] += 1
+        stats["regions"][key] = stats["regions"].get(key, 0) + 1
     apply_positions(me, positions)
-    return moved
+
+    inflated = 0
+    for _ in range(rounds):
+        need = _face_clearance(me, regions, tgt_bvhs)
+        if max(need, default=0.0) <= 1e-6:
+            break
+        dirs = _clearance_directions(me, regions, tgt_bvhs)
+        dirs = _smooth_field(dirs, me, iterations=3)
+        need = _blend_field(me, need, iterations=2)
+        positions = []
+        moved = 0
+        for i, v in enumerate(me.vertices):
+            depth = need[i]
+            x, y, z = dirs[i]
+            length = (x * x + y * y + z * z) ** 0.5
+            if depth > 1e-6 and length > 1e-9:
+                moved += 1
+                scale = depth / length
+                if depth > max_push:
+                    scale = max_push / length
+                x, y, z = x * scale, y * scale, z * scale
+            else:
+                x = y = z = 0.0
+            positions.append(v.co + Vector((x, y, z)))
+        apply_positions(me, positions)
+        inflated += moved
+    stats["inflated"] = inflated
+    return stats
+
+
+def _clearance_directions(me: bpy.types.Mesh, regions: list[str | None],
+                          tgt_bvhs: dict[str, BVHTree]
+                          ) -> list[tuple[float, float, float]]:
+    """Per vertex: the outward normal of the base body next to it."""
+    out: list[tuple[float, float, float]] = []
+    for i, v in enumerate(me.vertices):
+        key = regions[i]
+        bvh = tgt_bvhs.get(key) if key else None
+        if bvh is None:
+            out.append((0.0, 0.0, 0.0))
+            continue
+        loc, nrm, _k, _dist = bvh.find_nearest(v.co)
+        if loc is None or nrm.length < 1e-6:
+            out.append((0.0, 0.0, 0.0))
+            continue
+        out.append((nrm.x, nrm.y, nrm.z))
+    return out
+
+
+def _blend_field(me: bpy.types.Mesh, field: list[float],
+                 iterations: int = 2) -> list[float]:
+    """Soften a per vertex field, but keep the peaks.
+
+    A plain average would flatten the field completely - a single face that
+    dips deep into the body would barely move the vertices around it.
+    """
+    adj: list[list[int]] = [[] for _ in field]
+    for p in me.polygons:
+        vs = list(p.vertices)
+        for i in vs:
+            for j in vs:
+                if i != j and j not in adj[i]:
+                    adj[i].append(j)
+    cur = list(field)
+    for _ in range(iterations):
+        nxt = list(cur)
+        for i, nbrs in enumerate(adj):
+            if not nbrs:
+                continue
+            avg = sum(cur[j] for j in nbrs) / len(nbrs)
+            nxt[i] = 0.7 * cur[i] + 0.3 * avg
+        cur = nxt
+    return cur
+
+
+def _face_clearance(me: bpy.types.Mesh, regions: list[str | None],
+                    tgt_bvhs: dict[str, BVHTree]) -> list[float]:
+    """Per vertex: how deep the outfit still is inside the base body.
+
+    The depth is measured on the face centre and on the edge mid points - a
+    face whose centre is outside can still dip into the skin with its edges.
+    """
+    req = [0.0] * len(me.vertices)
+    for p in me.polygons:
+        vs = list(p.vertices)
+        if not vs:
+            continue
+        key = regions[vs[0]]
+        if key is None or any(regions[i] != key for i in vs):
+            continue
+        bvh = tgt_bvhs.get(key)
+        if bvh is None:
+            continue
+        center = Vector((0.0, 0.0, 0.0))
+        for i in vs:
+            center += me.vertices[i].co
+        center /= len(vs)
+        points = [center]
+        for k in range(len(vs)):
+            a = me.vertices[vs[k]].co
+            b = me.vertices[vs[(k + 1) % len(vs)]].co
+            points.append((a + b) * 0.5)
+        need = 0.0
+        for q in points:
+            loc, nrm, _i, dist = bvh.find_nearest(q)
+            if loc is None or nrm.length < 1e-6:
+                continue
+            if (q - loc).dot(nrm) >= 0.0:
+                continue
+            if dist > need:
+                need = dist
+        if need <= 0.0:
+            continue
+        for i in vs:
+            if need > req[i]:
+                req[i] = need
+    return req
+
+
+def limb_extents(body_meshes: list[bpy.types.Object],
+                 min_weight: float = 0.3) -> dict[str, dict[str, list[float]]]:
+    """The world space bounding box of every hand / foot region of a body."""
+    out: dict[str, dict[str, list[float]]] = {}
+    for obj in body_meshes:
+        mw = obj.matrix_world
+        for i, key in enumerate(_vertex_limb(obj, min_weight)):
+            if not key:
+                continue
+            co = mw @ obj.data.vertices[i].co
+            rec = out.setdefault(key, {"min": [1e9] * 3, "max": [-1e9] * 3})
+            for k in range(3):
+                rec["min"][k] = min(rec["min"][k], co[k])
+                rec["max"][k] = max(rec["max"][k], co[k])
+    return out
+
+
+def scale_limb_forward(garment: bpy.types.Object, regions: list[str | None],
+                        tgt_extents: dict[str, dict[str, list[float]]],
+                        tgt_arm: bpy.types.Object,
+                        keys=("foot_L", "foot_R")) -> dict[str, float]:
+    """Let the outfit's foot reach as far forward as the base body's foot.
+
+    The shoe was modelled for a smaller foot, so after the retarget it stops
+    short of the toes and they stick out in front of it.  The shoe is stretched
+    along the foot's length until its front matches the base body's.
+    """
+    me = garment.data
+    out: dict[str, float] = {}
+    for key in keys:
+        ext = tgt_extents.get(key)
+        if not ext:
+            continue
+        side = "L" if key.endswith("L") else "R"
+        bone = tgt_arm.data.bones.get(f"足首D.{side}")
+        if bone is not None:
+            anchor = (tgt_arm.matrix_world @ bone.head_local).y
+        else:
+            anchor = (ext["min"][1] + ext["max"][1]) * 0.5
+        garment_y = [me.vertices[i].co.y for i, r in enumerate(regions) if r == key]
+        if not garment_y:
+            continue
+        boot_min = min(garment_y)
+        span_g = anchor - boot_min
+        span_t = anchor - ext["min"][1]
+        if span_g <= 1e-4 or span_t <= 1e-4:
+            continue
+        factor = span_t / span_g
+        if factor <= 1.002:
+            continue
+        positions = [v.co.copy() for v in me.vertices]
+        for i, r in enumerate(regions):
+            if r != key:
+                continue
+            positions[i].y = anchor + (positions[i].y - anchor) * factor
+        apply_positions(me, positions)
+        out[key] = factor
+    return out
 
 
 def geometric_tightness(garment: bpy.types.Object, tgt_bvh: BVHTree,
@@ -1194,9 +1465,17 @@ DEFAULT_CONFIG = {
         # 1.36% to 1.75% (and 0.3 and 0.8 give the same number), because the
         # garment already carries weights an artist tuned on its own body.
         # Off by default, kept for garments whose source weights are poor.
-        # the finger sleeves and the shoes keep the clearance they were
-        # modelled with, measured on the source body
-        "fit_tips": False,
+        # the glove and the shoe are the source's own finger and toe surfaces
+        # (no thickness of their own), so they are laid back onto the base
+        # body's hand and foot
+        "fit_limbs": True,
+        "limb_margin": 0.005,
+        "limb_max_dist": 0.05,
+        "limb_near_dist": 0.004,
+        "limb_min_weight": 0.3,
+        "limb_rounds": 4,
+        "limb_max_push": 0.012,
+        "scale_limbs": True,
         # fit the finger sleeves and the shoes onto the base body's limbs
         "fit_limb_ends": False,
         "limb_reach": 0.14,
@@ -1366,13 +1645,6 @@ def run(src_objs: list[bpy.types.Object], tgt_objs: list[bpy.types.Object],
 
     snapshot("stage1_extracted")
 
-    # The clearance the finger sleeves and the shoes keep over the body is
-    # measured while the outfit still sits on the source body.
-    tip_clr: dict[int, float] = {}
-    if cloth and cfg["fit"].get("fit_tips", True):
-        src_bvh = build_bvh(src_body, src_skin_faces)
-        tip_clr = tip_clearances(cloth[0], src_bvh)
-
     # ---- P1-05: re-skin the garment onto the target rig ----
     bone_map = dict(rig_map["mapping"])
     for name in rig_map["garment_bones"]:
@@ -1419,14 +1691,29 @@ def run(src_objs: list[bpy.types.Object], tgt_objs: list[bpy.types.Object],
                             max_pull=cfg["fit"]["max_pull"],
                             max_fit_dist=cfg["fit"]["max_fit_dist"]) if cloth else {}
 
-    # the finger sleeves and the shoes are modelled on a smaller hand and foot
-    tip_stats: dict[str, Any] = {}
-    if cloth and tip_clr and cfg["fit"].get("fit_tips", True):
-        tip_stats = {"vertices": len(tip_clr),
-                     "moved": apply_tip_fit(cloth[0], tgt_bvh, tip_clr)}
+    # The glove and the shoe are the source's own finger and toe surfaces, so
+    # they have to be laid back onto the base body's hand and foot - they are
+    # buried inside it otherwise, because the base body has the bigger hands.
+    limb_fit_stats: dict[str, Any] = {}
+    if cloth and cfg["fit"].get("fit_limbs", True):
+        tgt_limb_bvhs = limb_bvhs(tgt_body_meshes,
+                                  cfg["fit"].get("limb_min_weight", 0.3))
+        # the shoe has to reach as far forward as the base body's foot
+        forward = scale_limb_forward(
+            cloth[0], limb_regions(cloth[0]),
+            limb_extents(tgt_body_meshes, cfg["fit"].get("limb_min_weight", 0.3)),
+            tgt_arm) if cfg["fit"].get("scale_limbs", True) else {}
+        limb_fit_stats = fit_limb_regions(
+            cloth[0], tgt_limb_bvhs,
+            margin=cfg["fit"].get("limb_margin", 0.003),
+            max_dist=cfg["fit"].get("limb_max_dist", 0.05),
+            near_dist=cfg["fit"].get("limb_near_dist", 0.004),
+            rounds=cfg["fit"].get("limb_rounds", 4),
+            max_push=cfg["fit"].get("limb_max_push", 0.012))
+        limb_fit_stats["forward_scale"] = forward
 
     limb_stats: dict[str, Any] = {}
-    if cloth and cfg["fit"].get("fit_limb_ends", True):
+    if cloth and cfg["fit"].get("fit_limb_ends", False):
         limb_stats = fit_limb_ends(cloth[0], tgt_body_meshes[0], tgt_arm, tgt_bvh,
                                     max_reach=cfg["fit"].get("limb_reach", 0.14))
 
@@ -1564,7 +1851,8 @@ def run(src_objs: list[bpy.types.Object], tgt_objs: list[bpy.types.Object],
             "created_bones": created,
             "dropped_bones": rig_map["dropped_bones"],
         },
-        "fit": {**fit_stats, "tips": tip_stats, "limb_ends": limb_stats,
+        "fit": {**fit_stats, "limbs": limb_fit_stats,
+                "limb_ends": limb_stats,
                 **reweight_stats, **cfg["fit"]},
         "body_bones": len(body_bones),
         "mask": mask_stats,
