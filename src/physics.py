@@ -57,6 +57,78 @@ def _bone_length(armature: bpy.types.Object, name: str) -> float | None:
     return (b.tail_local - b.head_local).length
 
 
+def _collision_translation(src_objects: list[bpy.types.Object],
+                           tgt_objects: list[bpy.types.Object],
+                           garment_bones: set[str]):
+    """Work out how the outfit's collision groups map onto the target's.
+
+    The two models do not number their collision groups the same way:
+    刻晴 keeps the legs in group 1 and the arms in group 2, 达妮娅 keeps both
+    in group 0 and the feet in group 7.  A skirt that is copied verbatim looks
+    for group 1, finds nothing, and swings straight through the legs.
+
+    So the *relationship* is translated instead of the raw numbers: every
+    source body group is mapped onto the target groups of the same bones, and
+    the outfit's own groups are moved into groups the target does not use.
+    """
+    src_body: dict[str, tuple[int, list[bool]]] = {}
+    for o in src_objects:
+        if getattr(o, "mmd_type", "NONE") != "RIGID_BODY":
+            continue
+        bone = o.mmd_rigid.bone
+        if not bone or bone in garment_bones:
+            continue
+        src_body.setdefault(bone, (o.mmd_rigid.collision_group_number,
+                                   list(o.mmd_rigid.collision_group_mask)))
+
+    tgt_body: dict[str, tuple[int, list[bool], bpy.types.Object]] = {}
+    tgt_bone_groups: dict[str, set[int]] = {}
+    for o in tgt_objects:
+        if getattr(o, "mmd_type", "NONE") != "RIGID_BODY":
+            continue
+        bone = o.mmd_rigid.bone
+        if not bone or bone in garment_bones:
+            continue
+        tgt_bone_groups.setdefault(bone, set()).add(
+            o.mmd_rigid.collision_group_number)
+        if bone not in tgt_body:
+            tgt_body[bone] = (o.mmd_rigid.collision_group_number,
+                              list(o.mmd_rigid.collision_group_mask), o)
+
+    # source body group -> the target groups of the same bones
+    src_group_bones: dict[int, set[str]] = {}
+    for bone, (sg, _sm) in src_body.items():
+        src_group_bones.setdefault(sg, set()).add(bone)
+    group_map: dict[int, set[int]] = {}
+    for sg, bones in src_group_bones.items():
+        groups: set[int] = set()
+        for b in bones:
+            groups |= tgt_bone_groups.get(b, set())
+        if groups:
+            group_map[sg] = groups
+
+    return src_body, tgt_body, group_map
+
+
+def _fresh_groups(tgt_objects: list[bpy.types.Object],
+                  wanted: list[int]) -> dict[int, int]:
+    """Move the outfit's collision groups into groups the target does not use."""
+    used = set()
+    for o in tgt_objects:
+        if getattr(o, "mmd_type", "NONE") == "RIGID_BODY":
+            used.add(o.mmd_rigid.collision_group_number)
+    out: dict[int, int] = {}
+    for g in wanted:
+        if g in out:
+            continue
+        n = g
+        while n in used:
+            n += 1
+        used.add(n)
+        out[g] = n
+    return out
+
+
 def migrate_physics(src_objects: list[bpy.types.Object],
                     tgt_objects: list[bpy.types.Object],
                     src_arm: bpy.types.Object, tgt_arm: bpy.types.Object,
@@ -92,6 +164,12 @@ def migrate_physics(src_objects: list[bpy.types.Object],
     if not selected:
         return {"skipped": "no rigid body rides on an outfit bone"}
 
+    src_body_rb, tgt_body_rb, group_map = _collision_translation(
+        src_objects, tgt_objects, garment_bones)
+    # the outfit's own groups are moved out of the way of the target's
+    outfit_groups = sorted({o.mmd_rigid.collision_group_number for o in selected})
+    fresh = _fresh_groups(tgt_objects, outfit_groups)
+
     created: dict[str, bpy.types.Object] = {}
     skipped: list[str] = []
     for o in selected:
@@ -100,6 +178,20 @@ def migrate_physics(src_objects: list[bpy.types.Object],
         if d is None:
             skipped.append(o.name)
             continue
+        # the mask is translated: a bit that pointed at a source body group
+        # now points at the target groups of the same bones
+        src_mask = list(o.mmd_rigid.collision_group_mask)
+        new_mask = [False] * len(src_mask)
+        for s, on in enumerate(src_mask):
+            if not on:
+                continue
+            if s in fresh:
+                new_mask[fresh[s]] = True
+            for t_g in group_map.get(s, ()):
+                if t_g < len(new_mask):
+                    new_mask[t_g] = True
+        new_group = fresh.get(o.mmd_rigid.collision_group_number,
+                              o.mmd_rigid.collision_group_number)
         loc = d @ o.matrix_world.translation
         rot_src = o.matrix_world.to_euler("YXZ")
         rot = (d.to_3x3() @ rot_src.to_matrix()).to_euler("YXZ")
@@ -121,8 +213,8 @@ def migrate_physics(src_objects: list[bpy.types.Object],
             rotation=rot,
             size=size,
             dynamics_type=int(o.mmd_rigid.type),
-            collision_group_number=o.mmd_rigid.collision_group_number,
-            collision_group_mask=list(o.mmd_rigid.collision_group_mask),
+            collision_group_number=new_group,
+            collision_group_mask=new_mask,
             name=o.name,
             name_e=o.mmd_rigid.name_e,
             bone=bone,
@@ -138,6 +230,50 @@ def migrate_physics(src_objects: list[bpy.types.Object],
             new.rigid_body.use_margin = rb.use_margin
             new.rigid_body.collision_margin = rb.collision_margin
         created[o.name] = new
+
+    # The base model's big limb colliders (the ones whose mask allows every
+    # group) are what the outfit has to hit.  刻晴's own skirt is configured
+    # with a mask of {6} - it never collided with the legs in the source
+    # model either - so copying the relationship is not enough, the
+    # relationship has to be added.
+    limb_groups: set[int] = set()
+    for _bone, (_g, _m, _o) in tgt_body_rb.items():
+        if all(_m):
+            limb_groups.add(_g)
+
+    # the target's body rigid bodies have to allow the outfit's groups the
+    # same way the source's body rigid bodies allowed them
+    body_mask_fixes = 0
+    for bone, (_tg, _tm, obj) in tgt_body_rb.items():
+        twin = src_body_rb.get(bone)
+        if twin is None:
+            continue
+        src_mask = twin[1]
+        mask = list(obj.mmd_rigid.collision_group_mask)
+        changed = False
+        for g in outfit_groups:
+            if g < len(src_mask) and src_mask[g]:
+                n = fresh[g]
+                if n < len(mask) and not mask[n]:
+                    mask[n] = True
+                    changed = True
+        if changed:
+            obj.mmd_rigid.collision_group_mask = mask
+            body_mask_fixes += 1
+
+    # open the outfit up against the base body's limbs
+    opened = 0
+    for o in created.values():
+        rb = o.mmd_rigid
+        mask = list(rb.collision_group_mask)
+        changed = False
+        for g in limb_groups:
+            if g < len(mask) and not mask[g]:
+                mask[g] = True
+                changed = True
+        if changed:
+            rb.collision_group_mask = mask
+            opened += 1
 
     # the joints: re-point the endpoints
     def endpoint(name: str):
@@ -212,6 +348,11 @@ def migrate_physics(src_objects: list[bpy.types.Object],
 
     return {
         "rigid_bodies": len(created),
+        "body_mask_fixes": body_mask_fixes,
+        "limb_groups": sorted(limb_groups),
+        "opened_to_limbs": opened,
+        "group_map": {str(k): sorted(v) for k, v in group_map.items()},
+        "outfit_groups": {str(k): v for k, v in fresh.items()},
         "rigid_bodies_skipped": len(skipped),
         "joints": joints_created,
         "joints_skipped": joints_skipped,
