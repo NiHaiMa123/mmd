@@ -333,16 +333,145 @@ def motion_check(objects: list[bpy.types.Object], motions: str | None,
     }
 
 
+def physics_motion_check(objects: list[bpy.types.Object], motions: str,
+                         garment_materials: list[str] | None,
+                         first_frame: int = 340, last_frame: int = 420,
+                         break_collision: bool = False) -> dict[str, Any]:
+    """Count the body points that pierce the clothes *with* the physics on.
+
+    The normal motion check only evaluates the rig, so it measures the
+    clipping of a model whose physics never runs.  This one maps the MMD
+    collision groups onto Blender's rigid body world, lets Bullet run and
+    writes the simulated motion back onto the bones, which is what MMD does.
+
+    `break_collision` switches the outfit off the base body's limbs again -
+    that is the state before the collision groups were translated, and it
+    makes the two runs comparable.
+    """
+    from . import dressing, motion as motion_mod, physics_sim
+
+    split = split_faces(objects, garment_materials)
+    gmesh = split["garment_mesh"]
+    bmesh_obj = split["body_mesh"]
+    if gmesh is None or bmesh_obj is None:
+        return {"skipped": "model has no garment/skin split"}
+    if not split["garment_faces"] or not split["skin_faces"]:
+        return {"skipped": "model has no garment/skin split"}
+
+    scene = bpy.context.scene
+    arm = next((o for o in objects if o.type == "ARMATURE"), None)
+    if arm is None:
+        return {"skipped": "model has no armature"}
+
+    # the rest signs, taken while the rig is still in its rest pose
+    bme, bev = _evaluated_mesh(bmesh_obj)
+    gme, gev = _evaluated_mesh(gmesh)
+    rest_sign = motion_mod.rest_side_signs(
+        motion_mod._bvh_from(bme, split["skin_faces"]),
+        motion_mod._bvh_from(gme, split["garment_faces"]),
+        bme, split["skin_faces"])
+    bev.to_mesh_clear()
+    if gev is not bev:
+        gev.to_mesh_clear()
+    dom = dressing.dominant_bones(bmesh_obj)
+
+    try:
+        bpy.ops.mmd_tools.import_vmd(filepath=motions, scale=0.08,
+                                     rename_bones=True, log_level="ERROR")
+    except Exception as exc:                        # noqa: BLE001
+        return {"error": f"vmd import failed: {type(exc).__name__}: {exc}"}
+
+    setup = physics_sim.setup(scene, arm, first_frame, last_frame)
+    if break_collision:
+        _break_limb_collision(scene)
+
+    results = []
+    for f in range(first_frame, last_frame + 1, 15):
+        physics_sim.run(scene, f, f)
+        bme, bev = _evaluated_mesh(bmesh_obj)
+        gme, gev = _evaluated_mesh(gmesh)
+        pierced, checked, hits = motion_mod._pierce_count(
+            motion_mod._bvh_from(bme, split["skin_faces"]),
+            motion_mod._bvh_from(gme, split["garment_faces"]),
+            bme, split["skin_faces"], rest_sign, stride=3)
+        bev.to_mesh_clear()
+        if gev is not bev:
+            gev.to_mesh_clear()
+        regions: dict[str, int] = {}
+        for i in hits:
+            key = body_region(dom[i]) if i < len(dom) else "other"
+            regions[key] = regions.get(key, 0) + 1
+        results.append({"frame": f, "pierced": pierced, "checked": checked,
+                        "ratio": round(pierced / max(checked, 1), 5),
+                        "regions": regions})
+    totals: dict[str, int] = {}
+    for r in results:
+        for key, n in r["regions"].items():
+            totals[key] = totals.get(key, 0) + n
+    return {
+        "physics": True,
+        "break_collision": break_collision,
+        "frames": [first_frame, last_frame],
+        "setup": setup,
+        "per_frame": results,
+        "pierced_by_region": dict(sorted(totals.items(),
+                                         key=lambda kv: -kv[1])),
+        "max_ratio": max((r["ratio"] for r in results), default=0.0),
+    }
+
+
+def _break_limb_collision(scene: bpy.types.Scene) -> None:
+    """Stop the outfit from colliding with the base body's limbs again.
+
+    The groups the outfit uses are the ones the source model used, so after
+    the translation the outfit sees the base body's limbs.  This puts it back
+    to the state before, where the two never collided.
+    """
+    rigids = [o for o in bpy.data.objects
+              if getattr(o, "mmd_type", "NONE") == "RIGID_BODY"]
+    if not rigids:
+        return
+    root = scene.rigidbody_world.collection
+    children = list(root.children)
+    slot_of: dict[int, int] = {}
+    for r in rigids:
+        g = r.mmd_rigid.collision_group_number
+        coll = bpy.data.collections.get(f"mmd_grp_{g}")
+        if coll is not None and coll in children:
+            slot_of[g] = children.index(coll)
+    outfit_groups = {r.mmd_rigid.collision_group_number for r in rigids
+                     if r.rigid_body.type == "ACTIVE"} - {0}
+    for r in rigids:
+        g = r.mmd_rigid.collision_group_number
+        mask = list(r.mmd_rigid.collision_group_mask)
+        for og in outfit_groups:
+            if g == og:
+                mask = [(i == og) for i in range(len(mask))]
+            elif og < len(mask):
+                mask[og] = False
+        r.mmd_rigid.collision_group_mask = mask
+        slots = [False] * 20
+        for i, on in enumerate(mask):
+            if on and i in slot_of:
+                slots[slot_of[i]] = True
+        r.rigid_body.collision_collections = slots
+
+
 def run_qa(objects: list[bpy.types.Object], motions: str | None = None,
            out_dir: str | None = None,
-           garment_materials: list[str] | None = None) -> dict[str, Any]:
+           garment_materials: list[str] | None = None,
+           physics: bool = False,
+           break_collision: bool = False) -> dict[str, Any]:
     from . import import_export as ie
 
     report: dict[str, Any] = {
         "model": ie.model_info(objects),
         "skinning": skinning_report(objects),
     }
-    report["motion"] = motion_check(objects, motions, garment_materials)
+    report["motion"] = (physics_motion_check(objects, motions, garment_materials,
+                                             break_collision=break_collision)
+                        if physics else
+                        motion_check(objects, motions, garment_materials))
 
     items = []
     skin = report["skinning"]["meshes"]

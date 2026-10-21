@@ -59,6 +59,12 @@ def _parse() -> argparse.Namespace:
     ap.add_argument("--keep-scene", action="store_true")
     ap.add_argument("--stages", action="store_true",
                     help="render a preview after every pipeline step")
+    ap.add_argument("--physics", action="store_true",
+                    help="run the MMD physics while measuring the clipping")
+    ap.add_argument("--break-collision", action="store_true",
+                    help="with --physics: switch the outfit off the body's "
+                         "limbs again (the state before the collision groups "
+                         "were translated)")
     ap.add_argument("--repair", action="store_true",
                     help="widen the body mask where the clothes get pierced")
     ap.add_argument("--regions", default=None,
@@ -224,7 +230,9 @@ def main() -> int:
             objs = ie.import_pmx(args.source)
             result.update(qa.run_qa(objs, motions=args.motions,
                                     out_dir=args.out,
-                                    garment_materials=_garment_materials(args.out)))
+                                    garment_materials=_garment_materials(args.out),
+                                    physics=args.physics,
+                                    break_collision=args.break_collision))
             result["ok"] = True
 
         else:
