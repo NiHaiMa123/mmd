@@ -413,9 +413,20 @@ def physics_motion_check(objects: list[bpy.types.Object], motions: str,
         _break_limb_collision(scene)
 
     results = []
-    for f in range(first_frame, last_frame + 1, 15):
-        physics_sim.run(scene, f, f)
+    sample = set(range(first_frame, last_frame + 1, 15))
+    # The simulation has to run through: bullet only advances when the frame
+    # moves on from the point cache start, and resetting the cache every frame
+    # would leave the outfit standing still.
+    cache = scene.rigidbody_world.point_cache
+    if cache.frame_start != first_frame:
+        cache.frame_start = first_frame
+    scene.frame_set(first_frame)
+    scene.view_layers[0].update()
+    for f in range(first_frame, last_frame + 1):
+        scene.frame_set(f)
         bpy.context.view_layer.update()
+        if f not in sample:
+            continue
         bme, bev = _evaluated_mesh_copy(bmesh_obj)
         gme, gev = _evaluated_mesh_copy(gmesh)
         pierced, checked, hits = motion_mod._pierce_count(
