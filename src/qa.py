@@ -161,6 +161,19 @@ def _evaluated_mesh(obj: bpy.types.Object):
     return me, ev
 
 
+def _evaluated_mesh_copy(obj: bpy.types.Object):
+    """Evaluate a mesh into a copy that does not belong to the depsgraph.
+
+    The physics handler rewrites the pose on every frame, and that invalidates
+    the depsgraph copy a mesh was taken from.  A mesh built with
+    new_from_object is independent of it.
+    """
+    depsgraph = bpy.context.evaluated_depsgraph_get()
+    ev = obj.evaluated_get(depsgraph)
+    me = bpy.data.meshes.new_from_object(ev, preserve_all_data_layers=True)
+    return me, ev
+
+
 def _bvh(obj: bpy.types.Object, face_indices: list[int]) -> BVHTree:
     me, oev = _evaluated_mesh(obj)
     verts = [v.co.copy() for v in me.vertices]
@@ -370,8 +383,9 @@ def physics_motion_check(objects: list[bpy.types.Object], motions: str,
         motion_mod._bvh_from(bme, split["skin_faces"]),
         motion_mod._bvh_from(gme, split["garment_faces"]),
         bme, split["skin_faces"])
-    # the evaluated meshes stay alive: the loop below evaluates them again and
-    # a mesh that was freed here is dead in the depsgraph already
+    bpy.data.meshes.remove(bme)
+    if gme is not bme:
+        bpy.data.meshes.remove(gme)
     dom = dressing.dominant_bones(bmesh_obj)
 
     try:
@@ -388,14 +402,15 @@ def physics_motion_check(objects: list[bpy.types.Object], motions: str,
     for f in range(first_frame, last_frame + 1, 15):
         physics_sim.run(scene, f, f)
         bpy.context.view_layer.update()
-        bme, bev = _evaluated_mesh(bmesh_obj)
-        gme, gev = _evaluated_mesh(gmesh)
+        bme, bev = _evaluated_mesh_copy(bmesh_obj)
+        gme, gev = _evaluated_mesh_copy(gmesh)
         pierced, checked, hits = motion_mod._pierce_count(
             motion_mod._bvh_from(bme, split["skin_faces"]),
             motion_mod._bvh_from(gme, split["garment_faces"]),
             bme, split["skin_faces"], rest_sign, stride=3)
-        # the evaluated meshes must not be freed here: the depsgraph still
-        # refers to them and the next iteration would read a dead mesh
+        bpy.data.meshes.remove(bme)
+        if gme is not bme:
+            bpy.data.meshes.remove(gme)
         regions: dict[str, int] = {}
         for i in hits:
             key = body_region(dom[i]) if i < len(dom) else "other"
