@@ -192,9 +192,23 @@ def migrate_physics(src_objects: list[bpy.types.Object],
                     new_mask[t_g] = True
         new_group = fresh.get(o.mmd_rigid.collision_group_number,
                               o.mmd_rigid.collision_group_number)
-        loc = d @ o.matrix_world.translation
-        rot_src = o.matrix_world.to_euler("YXZ")
-        rot = (d.to_3x3() @ rot_src.to_matrix()).to_euler("YXZ")
+        # A PMX rigid body is stored as an offset from the bone it follows, so
+        # the rest delta has to be applied to the *bone*, not to the world
+        # position.  Using the world position put every migrated rigid body
+        # metres away from the model - the skirt's colliders ended up three
+        # metres behind the character, which is why the physics never did
+        # anything.
+        src_bone = src_arm.data.bones.get(bone)
+        if src_bone is not None:
+            bone_world = src_arm.matrix_world @ src_bone.matrix_local
+            local = o.matrix_world @ bone_world.inverted()
+            new_matrix = d @ bone_world @ local
+            loc = new_matrix.to_translation()
+            rot = new_matrix.to_euler("YXZ")
+        else:
+            loc = d @ o.matrix_world.translation
+            rot_src = o.matrix_world.to_euler("YXZ")
+            rot = (d.to_3x3() @ rot_src.to_matrix()).to_euler("YXZ")
 
         # the size follows how much the bone changed
         src_len = _bone_length(src_arm, bone)
