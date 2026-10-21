@@ -39,6 +39,10 @@ FACE_WORDS = ("面", "顔", "目", "眼", "眉", "睫", "口", "舌", "鼻", "ch
 HAIR_WORDS = ("髪", "发", "髮", "辫", "髻", "hair", "bang")
 ACCESSORY_WORDS = ("饰", "飾", "飾品", "accessory", "ornament", "brooch",
                    "ribbon")
+# Legwear.  刻晴 paints her thigh high socks into a material called 腿, which
+# says nothing about clothes to a name matcher - but the socks are clothes.
+# The check runs after the skin check, so a material called 腿肌肤 stays skin.
+LEGWEAR_WORDS = ("腿", "靴下", "脚套", "legwear", "stocking")
 
 # --------------------------------------------------------------------------
 # Part enumeration
@@ -168,6 +172,11 @@ def _classify_material(name: str, faces: int, rel_z: float,
         if hit:
             category, confidence = "skin", 0.85
             reason.append(f"name contains skin word {hit!r}")
+    if category == "unknown":
+        hit = _hit(name, LEGWEAR_WORDS)
+        if hit:
+            category, confidence = "clothing", 0.75
+            reason.append(f"name contains legwear word {hit!r}")
     if category == "unknown":
         hit = _hit(name, FACE_WORDS)
         if hit:

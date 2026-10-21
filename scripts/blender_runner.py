@@ -26,6 +26,23 @@ def _garment_materials(out_dir: str | None) -> list[str] | None:
     The manifest lives in the dress output directory, but the motion check
     usually writes into a sub directory of it, so look a few levels up.
     """
+    return _manifest_field(out_dir, lambda m: m.get("selection", {})
+                           .get("selected_materials", []))
+
+
+def _outfit_groups(out_dir: str | None) -> list[int]:
+    """The collision groups the outfit ended up in.
+
+    The dress manifest records how the source outfit groups were moved into
+    the groups the base body does not use.  The QA needs them to undo the
+    translation for the "before" run.
+    """
+    groups = _manifest_field(out_dir, lambda m: list(
+        (m.get("physics", {}) or {}).get("outfit_groups", {}).values()))
+    return [int(g) for g in (groups or [])]
+
+
+def _manifest_field(out_dir: str | None, pick):
     if not out_dir:
         return None
     base = Path(out_dir).resolve()
@@ -33,7 +50,7 @@ def _garment_materials(out_dir: str | None) -> list[str] | None:
         manifest = base / "manifest.json"
         if manifest.exists():
             data = json.loads(manifest.read_text(encoding="utf-8"))
-            return data.get("selection", {}).get("selected_materials", [])
+            return pick(data)
         if base.parent == base:
             break
         base = base.parent
@@ -232,7 +249,8 @@ def main() -> int:
                                     out_dir=args.out,
                                     garment_materials=_garment_materials(args.out),
                                     physics=args.physics,
-                                    break_collision=args.break_collision))
+                                    break_collision=args.break_collision,
+                                    outfit_groups=_outfit_groups(args.out)))
             result["ok"] = True
 
         else:

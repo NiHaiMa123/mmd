@@ -162,25 +162,20 @@ def _evaluated_mesh(obj: bpy.types.Object):
 
 
 def _evaluated_mesh_copy(obj: bpy.types.Object):
-    """Evaluate a mesh into a copy that does not belong to the depsgraph.
+    """Take the evaluated mesh out of the depsgraph as an independent copy.
 
-    The physics handler rewrites the pose on every frame, and that invalidates
-    the depsgraph copy a mesh was taken from.  A mesh built with
-    new_from_object is independent of it.
+    new_from_object does *not* apply the modifiers: the copy stays in the
+    rest pose.  With the physics on that is fatal - every frame would measure
+    the same rest pose, the clothes would never move relative to the body and
+    the piercing count would stay at zero for the wrong reason.  to_mesh()
+    gives the deformed mesh, copy() takes it away from the depsgraph so the
+    physics handler cannot invalidate it in the next frame.
     """
-    # new_from_object does the evaluation itself, so it gets the *original*
-    # object - handing it an already evaluated one returns an empty mesh
     depsgraph = bpy.context.evaluated_depsgraph_get()
     ev = obj.evaluated_get(depsgraph)
-    me = bpy.data.meshes.new_from_object(obj, preserve_all_data_layers=True)
-    # the copy carries no vertex normals, and the piercing test works on the
-    # sign of the normal - take them from the original mesh
-    src = obj.data
-    if src is not None and len(src.vertices) == len(me.vertices):
-        buf = [0.0] * (len(me.vertices) * 3)
-        src.vertices.foreach_get("normal", buf)
-        me.vertices.foreach_set("normal", buf)
-        me.update()
+    src = ev.to_mesh(depsgraph=depsgraph, preserve_all_data_layers=True)
+    me = src.copy()
+    ev.to_mesh_clear()
     return me, ev
 
 
@@ -232,6 +227,59 @@ def _inside(bvh: BVHTree, point: Vector, max_dist: float = 3.0) -> bool:
         if _count_crossings(bvh, point, d, max_dist) % 2 == 1:
             odd += 1
     return odd > len(_CHECK_DIRS) / 2
+
+
+def _rigid_bvh(r: bpy.types.Object):
+    """The collision shape of a rigid body, as a BVH in world space.
+
+    The collider meshes are closed solids, so the parity test works on them
+    even where the body mesh itself has holes.  That makes them the honest
+    reference for "the skirt is inside the leg".
+    """
+    me = r.data
+    if me is None or not len(me.vertices) or not len(me.polygons):
+        return None
+    mw = r.matrix_world
+    verts = [mw @ v.co for v in me.vertices]
+    polys = [list(p.vertices) for p in me.polygons]
+    bvh = BVHTree.FromPolygons(verts, polys, all_triangles=False, epsilon=0.0)
+    center = Vector((0.0, 0.0, 0.0))
+    for v in verts:
+        center += v
+    center /= len(verts)
+    radius = max((v - center).length for v in verts)
+    return bvh, center, radius
+
+
+def _cloth_inside_colliders(cloth_me, gfaces: list[int],
+                            colliders: list[tuple[str, BVHTree, Vector, float]],
+                            stride: int = 4) -> tuple[int, int, dict[str, int]]:
+    """How many garment vertices ended up inside one of the colliders.
+
+    This is the other direction of the clipping: the body piercing the clothes
+    is measured by the sign flip, but "the skirt passes through the leg" is
+    the garment ending up inside the leg.  The colliders are the honest
+    reference for that - the body mesh has holes where the mask deleted the
+    covered faces, the collision shapes do not.
+    """
+    verts = set()
+    for fi in gfaces:
+        if fi < len(cloth_me.polygons):
+            verts.update(cloth_me.polygons[fi].vertices)
+    total = 0
+    checked = 0
+    per_bone: dict[str, int] = {}
+    for i in sorted(verts)[::stride]:
+        co = cloth_me.vertices[i].co
+        checked += 1
+        for bone, bvh, center, radius in colliders:
+            if (co - center).length > radius:
+                continue
+            if _inside(bvh, co):
+                total += 1
+                per_bone[bone] = per_bone.get(bone, 0) + 1
+                break
+    return total, checked, per_bone
 
 
 # Where a body point is, so a piercing report can be read per body part.
@@ -359,7 +407,9 @@ def motion_check(objects: list[bpy.types.Object], motions: str | None,
 def physics_motion_check(objects: list[bpy.types.Object], motions: str,
                          garment_materials: list[str] | None,
                          first_frame: int = 340, last_frame: int = 420,
-                         break_collision: bool = False) -> dict[str, Any]:
+                         break_collision: bool = False,
+                         outfit_groups: list[int] | None = None
+                         ) -> dict[str, Any]:
     """Count the body points that pierce the clothes *with* the physics on.
 
     The normal motion check only evaluates the rig, so it measures the
@@ -388,7 +438,10 @@ def physics_motion_check(objects: list[bpy.types.Object], motions: str,
 
     # the rest signs, taken while the rig is still in its rest pose
     bme, bev = _evaluated_mesh_copy(bmesh_obj)
-    gme, gev = _evaluated_mesh_copy(gmesh)
+    if gmesh is bmesh_obj:
+        gme, gev = bme, bev
+    else:
+        gme, gev = _evaluated_mesh_copy(gmesh)
     if not split["garment_faces"] or not split["skin_faces"]:
         return {"skipped": "garment/skin split is empty",
                 "garment_faces": len(split["garment_faces"]),
@@ -409,12 +462,23 @@ def physics_motion_check(objects: list[bpy.types.Object], motions: str,
         return {"error": f"vmd import failed: {type(exc).__name__}: {exc}"}
 
     setup = physics_sim.setup(scene, arm, first_frame, last_frame)
+    broken_info: dict[str, Any] = {}
     if break_collision:
-        _break_limb_collision(scene)
+        broken_info = _break_limb_collision(scene, set(outfit_groups or []))
+        if broken_info.get("skipped"):
+            return {"physics": True, "break_collision": True,
+                    "skipped": broken_info["skipped"]}
 
     results = []
     sample = set(range(first_frame, last_frame + 1, 15))
-    # The simulation has to run through: bullet only advances when the frame
+    # the collision shapes of the base body: the garment has to stay outside
+    # of them, so the vertices that end up inside are the skirt passing
+    # through the legs
+    outfit_set = set(outfit_groups or [])
+    body_rigids = [o for o in bpy.data.objects
+                   if getattr(o, "mmd_type", "NONE") == "RIGID_BODY"
+                   and o.mmd_rigid.collision_group_number not in outfit_set]
+    # the simulation has to run through: bullet only advances when the frame
     # moves on from the point cache start, and resetting the cache every frame
     # would leave the outfit standing still.
     cache = scene.rigidbody_world.point_cache
@@ -428,11 +492,24 @@ def physics_motion_check(objects: list[bpy.types.Object], motions: str,
         if f not in sample:
             continue
         bme, bev = _evaluated_mesh_copy(bmesh_obj)
-        gme, gev = _evaluated_mesh_copy(gmesh)
+        if gmesh is bmesh_obj:
+            gme, gev = bme, bev
+        else:
+            gme, gev = _evaluated_mesh_copy(gmesh)
         pierced, checked, hits = motion_mod._pierce_count(
             motion_mod._bvh_from(bme, split["skin_faces"]),
             motion_mod._bvh_from(gme, split["garment_faces"]),
             bme, split["skin_faces"], rest_sign, stride=3)
+        # the garment inside the base body's collision shapes
+        colliders = []
+        for o in body_rigids:
+            bvh = _rigid_bvh(o)
+            if bvh:
+                colliders.append((o.mmd_rigid.bone or "?", *bvh))
+        in_body, in_checked, in_by_bone = _cloth_inside_colliders(
+            gme, split["garment_faces"], colliders)
+        in_leg = sum(n for bone, n in in_by_bone.items()
+                     if body_region(bone) in ("leg", "foot"))
         bpy.data.meshes.remove(bme)
         if gme is not bme:
             bpy.data.meshes.remove(gme)
@@ -442,7 +519,11 @@ def physics_motion_check(objects: list[bpy.types.Object], motions: str,
             regions[key] = regions.get(key, 0) + 1
         results.append({"frame": f, "pierced": pierced, "checked": checked,
                         "ratio": round(pierced / max(checked, 1), 5),
-                        "regions": regions})
+                        "regions": regions,
+                        "cloth_in_body": in_body,
+                        "cloth_in_body_checked": in_checked,
+                        "cloth_in_leg": in_leg,
+                        "cloth_in_body_by_bone": in_by_bone})
     totals: dict[str, int] = {}
     for r in results:
         for key, n in r["regions"].items():
@@ -450,57 +531,78 @@ def physics_motion_check(objects: list[bpy.types.Object], motions: str,
     return {
         "physics": True,
         "break_collision": break_collision,
+        "broken": broken_info,
         "frames": [first_frame, last_frame],
         "setup": setup,
         "per_frame": results,
         "pierced_by_region": dict(sorted(totals.items(),
                                          key=lambda kv: -kv[1])),
+        "cloth_in_body_total": sum(r["cloth_in_body"] for r in results),
+        "cloth_in_leg_total": sum(r["cloth_in_leg"] for r in results),
         "max_ratio": max((r["ratio"] for r in results), default=0.0),
     }
 
 
-def _break_limb_collision(scene: bpy.types.Scene) -> None:
-    """Stop the outfit from colliding with the base body's limbs again.
+def _break_limb_collision(scene: bpy.types.Scene,
+                          outfit_groups: set[int] | None) -> dict[str, Any]:
+    """Undo the collision group translation: the outfit never touches the body.
 
-    The groups the outfit uses are the ones the source model used, so after
-    the translation the outfit sees the base body's limbs.  This puts it back
-    to the state before, where the two never collided.
+    Before the translation the outfit's masks did not contain the groups of the
+    base body's limbs, so the skirt swung straight through the legs.  The
+    translation opened the outfit against the limb groups and the body against
+    the outfit groups.  This removes exactly that one relation and leaves every
+    other collision alone - the outfit still collides with itself and the body
+    still collides with itself, so the two runs differ only in the outfit vs
+    body contact.
     """
     rigids = [o for o in bpy.data.objects
               if getattr(o, "mmd_type", "NONE") == "RIGID_BODY"]
     if not rigids:
-        return
+        return {"skipped": "no rigid bodies in the scene"}
+    groups = {r.mmd_rigid.collision_group_number for r in rigids}
+    if not outfit_groups:
+        return {"skipped": "the outfit's collision groups are unknown - the "
+                           "manifest of the dress run is needed"}
+    outfit = set(outfit_groups) & groups
+    body = groups - outfit
+    if not outfit or not body:
+        return {"skipped": f"cannot tell outfit {sorted(outfit)} from body "
+                           f"{sorted(body)}"}
+
     root = scene.rigidbody_world.collection
     children = list(root.children)
     slot_of: dict[int, int] = {}
-    for r in rigids:
-        g = r.mmd_rigid.collision_group_number
+    for g in sorted(groups):
         coll = bpy.data.collections.get(f"mmd_grp_{g}")
         if coll is not None and coll in children:
             slot_of[g] = children.index(coll)
-    outfit_groups = {r.mmd_rigid.collision_group_number for r in rigids
-                     if r.rigid_body.type == "ACTIVE"} - {0}
+
+    cleared = 0
     for r in rigids:
         g = r.mmd_rigid.collision_group_number
         mask = list(r.mmd_rigid.collision_group_mask)
-        for og in outfit_groups:
-            if g == og:
-                mask = [(i == og) for i in range(len(mask))]
-            elif og < len(mask):
-                mask[og] = False
+        # the outfit loses the body's groups, the body loses the outfit's
+        other = body if g in outfit else outfit
+        for o_g in other:
+            if o_g < len(mask) and mask[o_g]:
+                mask[o_g] = False
+                cleared += 1
         r.mmd_rigid.collision_group_mask = mask
         slots = [False] * 20
         for i, on in enumerate(mask):
             if on and i in slot_of:
                 slots[slot_of[i]] = True
         r.rigid_body.collision_collections = slots
+    return {"outfit_groups": sorted(outfit), "body_groups": sorted(body),
+            "mask_bits_cleared": cleared}
 
 
 def run_qa(objects: list[bpy.types.Object], motions: str | None = None,
            out_dir: str | None = None,
            garment_materials: list[str] | None = None,
            physics: bool = False,
-           break_collision: bool = False) -> dict[str, Any]:
+           break_collision: bool = False,
+           outfit_groups: list[int] | None = None) -> dict[str, Any]:
     from . import import_export as ie
 
     report: dict[str, Any] = {
@@ -508,7 +610,8 @@ def run_qa(objects: list[bpy.types.Object], motions: str | None = None,
         "skinning": skinning_report(objects),
     }
     report["motion"] = (physics_motion_check(objects, motions, garment_materials,
-                                             break_collision=break_collision)
+                                             break_collision=break_collision,
+                                             outfit_groups=outfit_groups)
                         if physics else
                         motion_check(objects, motions, garment_materials))
 

@@ -644,6 +644,173 @@ def fit_limb_ends(garment: bpy.types.Object, target_body: bpy.types.Object,
 
 
 # --------------------------------------------------------------------------
+# The shoe: subdivide it, then lay it on the base body's foot
+# --------------------------------------------------------------------------
+
+def subdivide_shoe(garment: bpy.types.Object, bones=("足先EX",),
+                    levels: int = 2) -> dict[str, Any]:
+    """Subdivide the shoe's faces.
+
+    The shoe is the source's own toe surface: it carries a few hundred
+    vertices for the whole foot, while the base body's foot has thousands.
+    Fitting such a coarse surface only moves it across the base body - the
+    toes cut through it, because there is no vertex left to wrap them.
+    Subdividing gives the fit enough vertices to do that.
+
+    The vertex weights and the UVs survive the subdivision, so the shoe keeps
+    its rig and its texture.
+    """
+    import bmesh
+
+    me = garment.data
+    stats: dict[str, Any] = {"levels": levels, "faces_before": len(me.polygons)}
+    for level in range(levels):
+        dom = dominant_bones(garment)
+        face_ids = []
+        for p in me.polygons:
+            verts = list(p.vertices)
+            if not verts:
+                continue
+            hits = sum(1 for v in verts if dom[v].split(".")[0] in bones)
+            if hits >= len(verts) * 0.5:
+                face_ids.append(p.index)
+        stats[f"faces_level{level + 1}"] = len(face_ids)
+        if not face_ids:
+            hist: dict[str, int] = {}
+            for b in dom:
+                hist[b] = hist.get(b, 0) + 1
+            stats["top_bones"] = sorted(hist.items(), key=lambda kv: -kv[1])[:12]
+            break
+        bm = bmesh.new()
+        bm.from_mesh(me)
+        bm.faces.ensure_lookup_table()
+        edges = set()
+        for fi in face_ids:
+            f = bm.faces[fi]
+            if f.is_valid:
+                edges.update(f.edges)
+        if not edges:
+            bm.free()
+            break
+        bmesh.ops.subdivide_edges(bm, edges=list(edges), cuts=1,
+                                  use_grid_fill=False, smooth=0.0)
+        bm.to_mesh(me)
+        bm.free()
+        stats[f"faces_after_level{level + 1}"] = len(me.polygons)
+    stats["faces"] = len(me.polygons)
+    stats["vertices"] = len(me.vertices)
+    return stats
+
+
+def _segment_distance(p: Vector, a: Vector, b: Vector) -> float:
+    ab = b - a
+    if ab.length_squared < 1e-12:
+        return (p - a).length
+    t = max(0.0, min(1.0, (p - a).dot(ab) / ab.length_squared))
+    return (p - (a + ab * t)).length
+
+
+def foot_bvh(body_meshes: list[bpy.types.Object], arm: bpy.types.Object,
+             side: str, max_radius: float = 0.13) -> BVHTree | None:
+    """A BVH of the base body's foot only.
+
+    The leg has to stay out of it.  The boot's shaft would be pulled onto the
+    leg and collapse, which is what happened when the whole limb was
+    projected.  The foot is everything within a hand's width of the line from
+    the ankle to the toe tip.
+    """
+    a = arm.data.bones.get(f"足首D.{side}") or arm.data.bones.get(f"足首.{side}")
+    b = arm.data.bones.get(f"つま先.{side}") or arm.data.bones.get(f"足先EX.{side}")
+    if a is None or b is None:
+        return None
+    p0 = arm.matrix_world @ a.head_local
+    p1 = arm.matrix_world @ b.tail_local
+
+    verts: list[Vector] = []
+    polys: list[list[int]] = []
+    for obj in body_meshes:
+        me = obj.data
+        mw = obj.matrix_world
+        base = len(verts)
+        verts.extend([mw @ v.co for v in me.vertices])
+        for p in me.polygons:
+            ids = list(p.vertices)
+            if not ids:
+                continue
+            if any(_segment_distance(verts[base + i], p0, p1) > max_radius
+                   for i in ids):
+                continue
+            polys.append([i + base for i in ids])
+    if not polys:
+        return None
+    return BVHTree.FromPolygons(verts, polys, all_triangles=False, epsilon=0.0)
+
+
+def lay_shoe_on_foot(garment: bpy.types.Object, foot_bvh: BVHTree,
+                     bones=("足先EX",), margin: float = 0.004,
+                     max_dist: float = 0.06, blend_rings: int = 3,
+                     falloff: float = 0.5) -> dict[str, Any]:
+    """Put the shoe back onto the base body's foot.
+
+    The shoe is the source's toe surface painted with the outfit material, so
+    it has no thickness of its own: it has to lie *on* the base body's foot,
+    not around it.  Its vertices are placed on the foot surface plus a small
+    margin.
+
+    The displacement is a field that fades out over the boot's shaft.  Moving
+    the shoe alone would tear it away from the boot above it; letting the
+    movement fade keeps the two connected.
+    """
+    me = garment.data
+    dom = dominant_bones(garment)
+    shoe = [i for i, b in enumerate(dom) if b in bones]
+    stats: dict[str, Any] = {"shoe_vertices": len(shoe)}
+    if not shoe:
+        # the names do not match: report what is there instead of failing
+        hist: dict[str, int] = {}
+        for b in dom:
+            hist[b] = hist.get(b, 0) + 1
+        stats["top_bones"] = sorted(hist.items(), key=lambda kv: -kv[1])[:12]
+        return stats
+    disp: dict[int, Vector] = {}
+    for i in shoe:
+        v = me.vertices[i]
+        loc, nrm, _idx, dist = foot_bvh.find_nearest(v.co)
+        if loc is None or nrm.length < 1e-6 or dist > max_dist:
+            continue
+        disp[i] = (loc + nrm * margin) - v.co
+    stats["placed"] = len(disp)
+    if not disp:
+        return stats
+
+    adj: list[list[int]] = [[] for _ in range(len(me.vertices))]
+    for e in me.edges:
+        a, b = e.vertices
+        adj[a].append(b)
+        adj[b].append(a)
+    current = set(disp)
+    for _ in range(blend_rings):
+        nxt: dict[int, Vector] = {}
+        for i in range(len(me.vertices)):
+            if i in current:
+                continue
+            neigh = [j for j in adj[i] if j in disp]
+            if not neigh:
+                continue
+            avg = Vector((0.0, 0.0, 0.0))
+            for j in neigh:
+                avg += disp[j]
+            nxt[i] = (avg / len(neigh)) * falloff
+        disp.update(nxt)
+        current |= set(nxt)
+    stats["blended"] = len(disp) - stats["placed"]
+    positions = [v.co + disp.get(i, Vector((0.0, 0.0, 0.0)))
+                 for i, v in enumerate(me.vertices)]
+    apply_positions(me, positions)
+    return stats
+
+
+# --------------------------------------------------------------------------
 # Hand and foot: lay the glove and the shoe back onto the base body
 # --------------------------------------------------------------------------
 
@@ -1568,6 +1735,15 @@ DEFAULT_CONFIG = {
         # the foot bones mapped by anatomy, not by name.
         "limb_lay_on_surface": [],
         "scale_limbs": True,
+        # The shoe is the source's own toe surface and carries a few hundred
+        # vertices for the whole foot, while the base body's foot has
+        # thousands.  Fitting that coarse surface cuts the base body's toes
+        # through it - the resolution is the problem, not the position.  So
+        # the shoe is subdivided first and then laid on the foot.
+        "subdivide_shoe": 2,
+        "lay_shoe_on_foot": True,
+        "shoe_margin": 0.004,
+        "shoe_blend_rings": 3,
         # fit the finger sleeves and the shoes onto the base body's limbs
         "fit_limb_ends": False,
         "limb_reach": 0.14,
@@ -1761,6 +1937,13 @@ def run(src_objs: list[bpy.types.Object], tgt_objs: list[bpy.types.Object],
 
     snapshot("stage2_reskinned")
 
+    # ---- the shoe has to be dense enough to wrap the base body's toes ----
+    shoe_stats: dict[str, Any] = {}
+    if cloth and cfg["fit"].get("subdivide_shoe"):
+        shoe_stats["subdivide"] = subdivide_shoe(
+            cloth[0], levels=int(cfg["fit"]["subdivide_shoe"]))
+        snapshot("stage2b_subdivided")
+
     # ---- P1-04: fit the garment onto the target body ----
     tgt_skin_faces: list[int] = []
     for m in tgt_body_meshes:
@@ -1816,6 +1999,18 @@ def run(src_objs: list[bpy.types.Object], tgt_objs: list[bpy.types.Object],
                                                ("foot_L", "foot_R"))),
             lay_on_bones={"foot_L": ("足先EX.L",), "foot_R": ("足先EX.R",)})
         limb_fit_stats["forward_scale"] = forward
+
+    # The shoe lies on the base body's foot, not around it: place it there.
+    # This runs last, so the general limb fit cannot pull it off again.
+    if cloth and cfg["fit"].get("lay_shoe_on_foot", True):
+        for side in ("L", "R"):
+            fbvh = foot_bvh(tgt_body_meshes, tgt_arm, side)
+            if fbvh is None:
+                continue
+            shoe_stats[side] = lay_shoe_on_foot(
+                cloth[0], fbvh, bones=(f"足先EX.{side}",),
+                margin=cfg["fit"].get("shoe_margin", 0.004),
+                blend_rings=int(cfg["fit"].get("shoe_blend_rings", 3)))
 
     limb_stats: dict[str, Any] = {}
     if cloth and cfg["fit"].get("fit_limb_ends", False):
@@ -1957,7 +2152,7 @@ def run(src_objs: list[bpy.types.Object], tgt_objs: list[bpy.types.Object],
             "dropped_bones": rig_map["dropped_bones"],
         },
         "fit": {**fit_stats, "limbs": limb_fit_stats,
-                "limb_ends": limb_stats,
+                "limb_ends": limb_stats, "shoe": shoe_stats,
                 **reweight_stats, **cfg["fit"]},
         "body_bones": len(body_bones),
         "mask": mask_stats,

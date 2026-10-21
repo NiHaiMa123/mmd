@@ -184,9 +184,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--physics", action="store_true",
                    help="run the MMD physics while measuring the clipping")
     p.add_argument("--break-collision", action="store_true",
-                   help="with --physics: switch the outfit off the body's "
+                   help="with --physics: take the outfit off the body's "
                         "limbs again (the state before the collision groups "
-                        "were translated)")
+                        "were translated), so the two runs can be compared")
     p.set_defaults(func=_cmd_qa)
     return ap
 
