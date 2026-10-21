@@ -61,6 +61,9 @@ def setup(scene: bpy.types.Scene, arm: bpy.types.Object,
     if scene.rigidbody_world is None:
         bpy.ops.rigidbody.world_add()
     world = scene.rigidbody_world
+    # mmd_tools leaves the world switched off - without this the simulation
+    # never advances and every body stands still
+    world.enabled = True
     root = world.collection
 
     # every rigid body goes back under the world root first
@@ -79,6 +82,10 @@ def setup(scene: bpy.types.Scene, arm: bpy.types.Object,
     for g in groups:
         c = bpy.data.collections.new(f"mmd_grp_{g}")
         root.children.link(c)
+        # the collection also has to be part of the scene: a collection that
+        # only hangs under the rigid body world is not in the view layer, and
+        # then the bodies are never evaluated and bullet stays idle
+        scene.collection.children.link(c)
         coll_of[g] = c
     children = list(root.children)
     slot_of = {g: children.index(c) for g, c in coll_of.items()}
