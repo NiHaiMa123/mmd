@@ -793,7 +793,8 @@ def limb_bvhs(body_meshes: list[bpy.types.Object],
 def fit_limb_regions(garment: bpy.types.Object, tgt_bvhs: dict[str, BVHTree],
                      margin: float = 0.003, max_dist: float = 0.05,
                      near_dist: float = 0.004, rounds: int = 4,
-                     max_push: float = 0.012) -> dict[str, Any]:
+                     max_push: float = 0.012,
+                     lay_on_surface: tuple[str, ...] = ()) -> dict[str, Any]:
     """Lay the glove and the shoe back onto the base body's hand and foot.
 
     A vertex that ended up *inside* the base body - or within a few
@@ -823,8 +824,12 @@ def fit_limb_regions(garment: bpy.types.Object, tgt_bvhs: dict[str, BVHTree],
         if loc is None or nrm.length < 1e-6 or dist > max_dist:
             positions.append(v.co)
             continue
-        # outside the surface and not touching it -> the piece is fine
-        if (v.co - loc).dot(nrm) >= 0.0 and dist > near_dist:
+        # outside the surface and not touching it -> the piece is fine, unless
+        # this region has to be laid onto the surface as a whole (the shoe
+        # floats above the foot because the two models anchor it to different
+        # bones, and only its shape is right)
+        if key not in lay_on_surface and (v.co - loc).dot(nrm) >= 0.0 \
+                and dist > near_dist:
             positions.append(v.co)
             continue
         positions.append(loc + nrm * margin)
@@ -1545,6 +1550,13 @@ DEFAULT_CONFIG = {
         "limb_min_weight": 0.3,
         "limb_rounds": 4,
         "limb_max_push": 0.012,
+        # Laying the shoe onto the foot surface as a whole was tried and
+        # reverted: the shoe is not a shell around the foot, it is the foot's
+        # surface painted plus the boot above it, and projecting everything
+        # flattens the boot and tears the metal trim apart.  The shoe has to
+        # be anchored to the foot the way the source anchors it - that needs
+        # the foot bones mapped by anatomy, not by name.
+        "limb_lay_on_surface": [],
         "scale_limbs": True,
         # fit the finger sleeves and the shoes onto the base body's limbs
         "fit_limb_ends": False,
@@ -1789,7 +1801,9 @@ def run(src_objs: list[bpy.types.Object], tgt_objs: list[bpy.types.Object],
             max_dist=cfg["fit"].get("limb_max_dist", 0.05),
             near_dist=cfg["fit"].get("limb_near_dist", 0.004),
             rounds=cfg["fit"].get("limb_rounds", 4),
-            max_push=cfg["fit"].get("limb_max_push", 0.012))
+            max_push=cfg["fit"].get("limb_max_push", 0.012),
+            lay_on_surface=tuple(cfg["fit"].get("limb_lay_on_surface",
+                                               ("foot_L", "foot_R"))))
         limb_fit_stats["forward_scale"] = forward
 
     limb_stats: dict[str, Any] = {}
