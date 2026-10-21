@@ -416,6 +416,22 @@ Blender 调用 `frame_change_post` 处理器时会传 `(scene, depsgraph)`，
 仿真没有累积 ⇒ 裙摆的物理响应等于没有。
 正确做法是从 340 连续推进到 f，只在要测量的帧取数。
 
+### 最后一条线索：刚导入完场景，to_mesh 立刻就失效
+
+对比 rest_sign 的诊断脚本（`work/diag_signs.py`）报
+`ReferenceError: StructRNA of type Mesh has been removed`，
+而它只是**刚 import 完**就调 `qa._evaluated_mesh(...)`（没先释放过任何东西）⇒
+**从 PMX 导入出来的模型，depsgraph 里那份求值网格在导入后立刻就是死的**。
+
+⇒ 推论（下一步要验的）：
+- 无物理那条 QA 之所以还能跑出 986~1239，是因为 `skinning_report` 先跑，
+  它自己做了 `to_mesh` + `to_mesh_clear`，反而把缓存刷成了活的；
+- 物理路径的 rest_sign 拿不到活的网格 ⇒ 符号全 0 ⇒ pierced 永远 0。
+
+⇒ **验证方法**：在物理路径里，先跑一次 `skinning_report`（或任何一次
+  to_mesh + to_mesh_clear）再算 rest_sign，看数字是否变正。
+  这一步能一次性解释 pierced=0。
+
 ## 历史记录：手套与鞋子的穿模（根因已定位，待修）
 
 用 `closeup` 工具放大到手指和脚趾一级后，看清了三个事实：
