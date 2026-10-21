@@ -794,7 +794,9 @@ def fit_limb_regions(garment: bpy.types.Object, tgt_bvhs: dict[str, BVHTree],
                      margin: float = 0.003, max_dist: float = 0.05,
                      near_dist: float = 0.004, rounds: int = 4,
                      max_push: float = 0.012,
-                     lay_on_surface: tuple[str, ...] = ()) -> dict[str, Any]:
+                     lay_on_surface: tuple[str, ...] = (),
+                     lay_on_bones: dict[str, tuple[str, ...]] | None = None
+                     ) -> dict[str, Any]:
     """Lay the glove and the shoe back onto the base body's hand and foot.
 
     A vertex that ended up *inside* the base body - or within a few
@@ -812,6 +814,8 @@ def fit_limb_regions(garment: bpy.types.Object, tgt_bvhs: dict[str, BVHTree],
     """
     me = garment.data
     regions = limb_regions(garment)
+    gdom = dominant_bones(garment)
+    lay_on_bones = lay_on_bones or {}
     positions = []
     stats: dict[str, Any] = {"moved": 0, "regions": {}}
     for i, v in enumerate(me.vertices):
@@ -828,8 +832,14 @@ def fit_limb_regions(garment: bpy.types.Object, tgt_bvhs: dict[str, BVHTree],
         # this region has to be laid onto the surface as a whole (the shoe
         # floats above the foot because the two models anchor it to different
         # bones, and only its shape is right)
-        if key not in lay_on_surface and (v.co - loc).dot(nrm) >= 0.0 \
-                and dist > near_dist:
+        # The shoe is not a shell around the foot: the part the source's foot
+        # axis bone drives is the foot's own surface painted with the outfit
+        # material, and that part has to be laid onto the base body's foot.
+        # The boot above it keeps its own shape.
+        painted = (key in lay_on_surface
+                   and gdom[i].split(".")[0] in
+                   {b.split(".")[0] for b in lay_on_bones.get(key, ())})
+        if not painted and (v.co - loc).dot(nrm) >= 0.0 and dist > near_dist:
             positions.append(v.co)
             continue
         positions.append(loc + nrm * margin)
@@ -1803,7 +1813,8 @@ def run(src_objs: list[bpy.types.Object], tgt_objs: list[bpy.types.Object],
             rounds=cfg["fit"].get("limb_rounds", 4),
             max_push=cfg["fit"].get("limb_max_push", 0.012),
             lay_on_surface=tuple(cfg["fit"].get("limb_lay_on_surface",
-                                               ("foot_L", "foot_R"))))
+                                               ("foot_L", "foot_R"))),
+            lay_on_bones={"foot_L": ("足先EX.L",), "foot_R": ("足先EX.R",)})
         limb_fit_stats["forward_scale"] = forward
 
     limb_stats: dict[str, Any] = {}
