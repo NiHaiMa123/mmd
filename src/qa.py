@@ -377,8 +377,12 @@ def physics_motion_check(objects: list[bpy.types.Object], motions: str,
         return {"skipped": "model has no armature"}
 
     # the rest signs, taken while the rig is still in its rest pose
-    bme, bev = _evaluated_mesh(bmesh_obj)
-    gme, gev = _evaluated_mesh(gmesh)
+    bme, bev = _evaluated_mesh_copy(bmesh_obj)
+    gme, gev = _evaluated_mesh_copy(gmesh)
+    if not split["garment_faces"] or not split["skin_faces"]:
+        return {"skipped": "garment/skin split is empty",
+                "garment_faces": len(split["garment_faces"]),
+                "skin_faces": len(split["skin_faces"])}
     rest_sign = motion_mod.rest_side_signs(
         motion_mod._bvh_from(bme, split["skin_faces"]),
         motion_mod._bvh_from(gme, split["garment_faces"]),

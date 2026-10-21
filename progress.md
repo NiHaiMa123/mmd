@@ -365,6 +365,22 @@ depsgraph 里那份求值网格被上一轮释放了，下一轮拿到的是死�
 把来源的 `足先EX` 映射到目标的 `つま先`（踝→趾尖那根），
 位置就对上了；形状问题（脚更大）再靠上面那条解决。
 
+### 带物理的 QA：能跑了，但分割是空的
+
+`python -m src.cli qa --model <pmx> --motions <vmd> --physics [--break-collision]`
+
+**已经解决的**：
+- 碰撞组映射、刚体世界、mode 0/1/2 映射、跟骨关键帧、物理写回骨骼 ✓
+- 仿真必须在 point cache 起点连续推进 ✓
+- 循环里不能留 depsgraph 那份求值网格：物理回调每帧改姿态会让它失效
+  （`StructRNA of type Mesh has been removed`）⇒ 改用 `new_from_object` 拿独立副本 ✓
+- 交互式 Blender 跑不动这个负载（会崩）⇒ 仿真只放在后台 Blender ✓
+
+**还差**：跑通了，但 `checked = 0` —— 服装/皮肤的分割是空的
+（`split_faces` 退化成了「整块身体当皮肤」），所以一个穿模点都没测到。
+已加上明确的 skipped 报告而不是静默返回 0。
+⇒ 下一步查 `split_faces` 在这条路径上为什么匹配不到服装材质。
+
 ## 历史记录：手套与鞋子的穿模（根因已定位，待修）
 
 用 `closeup` 工具放大到手指和脚趾一级后，看清了三个事实：
