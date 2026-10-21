@@ -370,9 +370,8 @@ def physics_motion_check(objects: list[bpy.types.Object], motions: str,
         motion_mod._bvh_from(bme, split["skin_faces"]),
         motion_mod._bvh_from(gme, split["garment_faces"]),
         bme, split["skin_faces"])
-    bev.to_mesh_clear()
-    if gev is not bev:
-        gev.to_mesh_clear()
+    # the evaluated meshes stay alive: the loop below evaluates them again and
+    # a mesh that was freed here is dead in the depsgraph already
     dom = dressing.dominant_bones(bmesh_obj)
 
     try:

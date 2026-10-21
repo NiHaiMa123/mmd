@@ -329,6 +329,21 @@ MMD 自己的引擎不会这样（它在来源模型里跑得好好的），
 目标位置是否一致** —— 如果网格对、刚体错，差值就藏在
 `deltas[スカート_0_5]` 或刚体对象的来源位置上。
 
+### 带物理的 QA：功能已就位，还差最后一个网格生命周期 bug
+
+`python -m src.cli qa --model <pmx> --motions <vmd> --physics [--break-collision]`
+
+- `qa.physics_motion_check()`：把 MMD 碰撞组映射到 Blender 的刚体世界、让 Bullet 跑、
+  再把仿真结果写回骨骼（MMD 对 mode 1/2 刚体做的事），然后统计穿模 ✓
+- `--break-collision` 复现「服装与身体肢体不再碰撞」的旧状态，做 A/B ✓
+- 仿真放在**后台 Blender** 里跑：355 刚体 + 399 约束在交互式 Blender 里会把整个
+  应用拖垮（今天实测崩过一次），交互会话不要再跑它。
+
+**还差**：循环里取求值网格报 `StructRNA of type Mesh has been removed` ——
+depsgraph 里那份求值网格被上一轮释放了，下一轮拿到的是死指针。
+`to_mesh_clear()` 必须留给最后一次使用后，或者干脆不释放。
+（这也是 progress 里早就记过的那条坑的另一个变体。）
+
 ## 历史记录：手套与鞋子的穿模（根因已定位，待修）
 
 用 `closeup` 工具放大到手指和脚趾一级后，看清了三个事实：
