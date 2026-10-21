@@ -494,6 +494,85 @@ def transfer_target_weights(garment: bpy.types.Object, target_body: bpy.types.Ob
             "groups": len(buckets)}
 
 
+# --------------------------------------------------------------------------
+# Limb end fitting: the finger sleeves and the shoes
+# --------------------------------------------------------------------------
+
+# The outfit was modelled on a smaller hand and foot than the base body has,
+# so the fingers push through the finger sleeves and the foot bulges out of
+# the shoe.  These are the bones that describe the limb and the clearance
+# the outfit keeps around it.
+LIMB_ENDS = {
+    "hand_l": ("手首.L", "小指３.L", 0.004),
+    "hand_r": ("手首.R", "小指３.R", 0.004),
+    "foot_l": ("足首.L", "つま先.L", 0.006),
+    "foot_r": ("足首.R", "つま先.R", 0.006),
+}
+
+
+def _limb_axis(armature: bpy.types.Object, root: str, tip: str):
+    """The axis of a limb: from the root bone to the tip of the last bone."""
+    rb = armature.data.bones.get(root)
+    tb = armature.data.bones.get(tip)
+    if rb is None or tb is None:
+        return None
+    head = armature.matrix_world @ rb.head_local
+    tail = armature.matrix_world @ tb.tail_local
+    direction = tail - head
+    if direction.length < 1e-6:
+        return None
+    return head, direction.normalized(), (tail - head).length
+
+
+def fit_limb_ends(garment: bpy.types.Object, target_body: bpy.types.Object,
+                  tgt_arm: bpy.types.Object, body_bvh: BVHTree,
+                  max_reach: float = 0.14) -> dict[str, Any]:
+    """Fit the finger sleeves and the shoes onto the base body's limbs.
+
+    Every vertex of those parts is placed on the base body surface plus a
+    small clearance, measured radially around the limb axis.  The outfit
+    keeps its shape along the limb - a sleeve is not stretched into a
+    different shape - it only gets the thickness the bigger hand needs.
+    """
+    me = garment.data
+    stats: dict[str, Any] = {"moved": 0, "regions": {}}
+
+    for name, (root, tip, clearance) in LIMB_ENDS.items():
+        axis = _limb_axis(tgt_arm, root, tip)
+        if axis is None:
+            continue
+        head, direction, length = axis
+        # the part of the garment that belongs to this limb
+        reach = max_reach
+        moved = 0
+        new_positions = []
+        for v in me.vertices:
+            co = v.co
+            rel = co - head
+            along = rel.dot(direction)
+            if along < -0.03 or along > length + 0.10:
+                new_positions.append(co)
+                continue
+            radial = rel - direction * along
+            r = radial.length
+            if r < 1e-5 or r > reach:
+                new_positions.append(co)
+                continue
+            rd = radial / r
+            loc, _n, _i, _d = body_bvh.ray_cast(head + direction * along, rd,
+                                                reach)
+            if loc is None:
+                new_positions.append(co)
+                continue
+            new_positions.append(loc + rd * clearance)
+            moved += 1
+        apply_positions(me, new_positions)
+        stats["regions"][name] = moved
+        stats["moved"] += moved
+
+    return stats
+
+
 def body_bone_tightness(garment: bpy.types.Object, body_bones: set[str]
                         ) -> list[float]:
     """Per vertex: 1 = driven by body bones (tight), 0 = by garment bones.
@@ -987,6 +1066,9 @@ DEFAULT_CONFIG = {
         # 1.36% to 1.75% (and 0.3 and 0.8 give the same number), because the
         # garment already carries weights an artist tuned on its own body.
         # Off by default, kept for garments whose source weights are poor.
+        # fit the finger sleeves and the shoes onto the base body's limbs
+        "fit_limb_ends": False,
+        "limb_reach": 0.14,
         "use_target_weights": False,
         "target_weight_blend": 0.8,
     },
@@ -1189,6 +1271,12 @@ def run(src_objs: list[bpy.types.Object], tgt_objs: list[bpy.types.Object],
                             max_pull=cfg["fit"]["max_pull"],
                             max_fit_dist=cfg["fit"]["max_fit_dist"]) if cloth else {}
 
+    # the finger sleeves and the shoes are modelled on a smaller hand and foot
+    limb_stats: dict[str, Any] = {}
+    if cloth and cfg["fit"].get("fit_limb_ends", True):
+        limb_stats = fit_limb_ends(cloth[0], tgt_body_meshes[0], tgt_arm, tgt_bvh,
+                                    max_reach=cfg["fit"].get("limb_reach", 0.14))
+
     snapshot("stage3_fitted")
 
     # ---- P2: high risk pose suite, before the body gets holes ----
@@ -1323,7 +1411,8 @@ def run(src_objs: list[bpy.types.Object], tgt_objs: list[bpy.types.Object],
             "created_bones": created,
             "dropped_bones": rig_map["dropped_bones"],
         },
-        "fit": {**fit_stats, **reweight_stats, **cfg["fit"]},
+        "fit": {**fit_stats, "limb_ends": limb_stats, **reweight_stats,
+                **cfg["fit"]},
         "mask": mask_stats,
         "motion": motion_stats,
         "physics": physics_stats,
