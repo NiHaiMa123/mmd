@@ -573,6 +573,115 @@ def fit_limb_ends(garment: bpy.types.Object, target_body: bpy.types.Object,
     return stats
 
 
+# --------------------------------------------------------------------------
+# Finger sleeves and shoes: keep the clearance the outfit was built with
+# --------------------------------------------------------------------------
+
+# The bones that carry the fingers and the toes.  The outfit was modelled on
+# a smaller hand and foot than the base body has, so the fingers push
+# through the finger sleeves and the foot bulges out of the shoe.
+TIP_BONES = (
+    "親指０", "親指１", "親指２",
+    "人指１", "人指２", "人指３",
+    "中指１", "中指２", "中指３",
+    "薬指１", "薬指２", "薬指３",
+    "小指１", "小指２", "小指３",
+    "つま先", "足先EX",
+)
+
+
+AUX_GROUPS = ("mmd_", "UV_", "_")
+
+
+def dominant_bones(mesh_obj: bpy.types.Object) -> list[str]:
+    """The bone that drives each vertex.
+
+    The mmd_tools helper groups have to be left out: `mmd_edge_scale` sits on
+    every vertex with a weight of 1.0, so a plain "largest weight wins" would
+    call every vertex an edge scale and never find a bone at all.
+    """
+    groups = [vg.name for vg in mesh_obj.vertex_groups]
+    out = []
+    for v in mesh_obj.data.vertices:
+        best, bw = "", 0.0
+        for g in v.groups:
+            name = groups[g.group]
+            if name.startswith(AUX_GROUPS):
+                continue
+            if g.weight > bw:
+                best, bw = name, g.weight
+        out.append(best)
+    return out
+
+
+def tip_clearances(garment: bpy.types.Object, src_bvh: BVHTree,
+                   tip_bones=TIP_BONES) -> dict[int, float]:
+    """How far the finger sleeves and the shoes stand off the source body.
+
+    Measured before the retarget, while the outfit still sits on the source
+    body.  The same clearance is reproduced on the base body, so the sleeves
+    keep their thickness instead of being flattened onto the skin.
+    """
+    dom = dominant_bones(garment)
+    out: dict[int, float] = {}
+    for i, name in enumerate(dom):
+        if name.split(".")[0] not in tip_bones:
+            continue
+        loc, _n, _idx, dist = src_bvh.find_nearest(garment.data.vertices[i].co)
+        if loc is not None:
+            out[i] = max(dist, 0.0)
+    return out
+
+
+def apply_tip_fit(garment: bpy.types.Object, tgt_bvh: BVHTree,
+                  clearances: dict[int, float]) -> int:
+    """Move the finger sleeves and the shoes onto the base body's limbs.
+
+    A vertex that ended up inside the base body (or closer to it than the
+    clearance it was modelled with) is pushed back out to the clearance it
+    had on the source body.  Only the vertices that follow a finger or a toe
+    bone are touched, so the sleeve and the rest of the outfit keep their
+    shape.
+    """
+    me = garment.data
+    positions = []
+    moved = 0
+    for i, v in enumerate(me.vertices):
+        clr = clearances.get(i)
+        if clr is None:
+            positions.append(v.co)
+            continue
+        loc, nrm, _idx, dist = tgt_bvh.find_nearest(v.co)
+        if loc is None or nrm.length < 1e-6:
+            positions.append(v.co)
+            continue
+        side = (v.co - loc).dot(nrm)
+        if side >= 0.0 and dist >= clr:
+            positions.append(v.co)
+            continue
+        positions.append(loc + nrm * clr)
+        moved += 1
+    apply_positions(me, positions)
+    return moved
+
+
+def geometric_tightness(garment: bpy.types.Object, tgt_bvh: BVHTree,
+                          snug: float = 0.015) -> list[float]:
+    """How tight a piece of the outfit sits on the base body.
+
+    The bone is a bad proxy for this: the hem of a skirt is bound to a leg
+    bone, so it counts as "body", but the skirt is loose there and pulling it
+    onto the body folds the skirt up.  The distance to the body says it
+    directly - a part that already lies on the body is tight, a part that
+    hangs a few centimetres away is loose and keeps its shape.
+    """
+    out = []
+    for v in garment.data.vertices:
+        loc, _n, _i, dist = tgt_bvh.find_nearest(v.co)
+        out.append(1.0 if (loc is not None and dist <= snug) else 0.0)
+    return out
+
+
 def body_bone_tightness(garment: bpy.types.Object, body_bones: set[str]
                         ) -> list[float]:
     """Per vertex: 1 = driven by body bones (tight), 0 = by garment bones.
@@ -593,14 +702,20 @@ def body_bone_tightness(garment: bpy.types.Object, body_bones: set[str]
         for g in v.groups:
             if g.weight <= 0.0:
                 continue
-            if names[g.group] in body_bones:
+            name = names[g.group]
+            # the mmd_tools helper groups (mmd_edge_scale and friends) sit on
+            # every vertex with a weight of 1.0; counting them would make every
+            # vertex look like it is driven by a garment bone
+            if name.startswith(AUX_GROUPS):
+                continue
+            if name in body_bones:
                 wb = max(wb, g.weight)
             else:
                 wg = max(wg, g.weight)
-        # smooth transition around the point where the two compete
-        t = (wb - wg) / 0.25
-        t = max(0.0, min(1.0, t + 0.5))
-        out.append(t * t * (3.0 - 2.0 * t))
+        # The body bone has to win outright.  A soft transition over the
+        # difference pulls the edges of the skirt (which are partly bound to
+        # the waist) onto the body and folds the skirt up.
+        out.append(wb if wb > wg else 0.0)
     return out
 
 
@@ -1066,9 +1181,18 @@ DEFAULT_CONFIG = {
         # 1.36% to 1.75% (and 0.3 and 0.8 give the same number), because the
         # garment already carries weights an artist tuned on its own body.
         # Off by default, kept for garments whose source weights are poor.
+        # the finger sleeves and the shoes keep the clearance they were
+        # modelled with, measured on the source body
+        "fit_tips": False,
         # fit the finger sleeves and the shoes onto the base body's limbs
         "fit_limb_ends": False,
         "limb_reach": 0.14,
+        # a part of the outfit counts as tight when it lies this close to
+        # the base body - the geometric measure is the right one, but the
+        # selection still has to be narrowed down per part (a skirt hem is
+        # bound to a leg bone but hangs loose there)
+        "snug": 0.015,
+        "use_tight_fit": False,
         "use_target_weights": False,
         "target_weight_blend": 0.8,
     },
@@ -1229,6 +1353,13 @@ def run(src_objs: list[bpy.types.Object], tgt_objs: list[bpy.types.Object],
 
     snapshot("stage1_extracted")
 
+    # The clearance the finger sleeves and the shoes keep over the body is
+    # measured while the outfit still sits on the source body.
+    tip_clr: dict[int, float] = {}
+    if cloth and cfg["fit"].get("fit_tips", True):
+        src_bvh = build_bvh(src_body, src_skin_faces)
+        tip_clr = tip_clearances(cloth[0], src_bvh)
+
     # ---- P1-05: re-skin the garment onto the target rig ----
     bone_map = dict(rig_map["mapping"])
     for name in rig_map["garment_bones"]:
@@ -1256,7 +1387,11 @@ def run(src_objs: list[bpy.types.Object], tgt_objs: list[bpy.types.Object],
         if len(tgt_body_meshes) == 1 else _merge_bvh(tgt_body_meshes, tgt_skin_faces)
 
     body_bones = set(rig_map["mapping"].keys())
-    tightness = body_bone_tightness(cloth[0], body_bones) if cloth else []
+    if cloth and cfg["fit"].get("use_tight_fit", False):
+        tightness = geometric_tightness(cloth[0], tgt_bvh,
+                                       cfg["fit"].get("snug", 0.015))
+    else:
+        tightness = ([0.0] * len(cloth[0].data.vertices) if cloth else [])
 
     # P1-05: let the tight parts follow the *target* body's weight gradient
     reweight_stats: dict[str, Any] = {}
@@ -1272,6 +1407,11 @@ def run(src_objs: list[bpy.types.Object], tgt_objs: list[bpy.types.Object],
                             max_fit_dist=cfg["fit"]["max_fit_dist"]) if cloth else {}
 
     # the finger sleeves and the shoes are modelled on a smaller hand and foot
+    tip_stats: dict[str, Any] = {}
+    if cloth and tip_clr and cfg["fit"].get("fit_tips", True):
+        tip_stats = {"vertices": len(tip_clr),
+                     "moved": apply_tip_fit(cloth[0], tgt_bvh, tip_clr)}
+
     limb_stats: dict[str, Any] = {}
     if cloth and cfg["fit"].get("fit_limb_ends", True):
         limb_stats = fit_limb_ends(cloth[0], tgt_body_meshes[0], tgt_arm, tgt_bvh,
@@ -1411,8 +1551,9 @@ def run(src_objs: list[bpy.types.Object], tgt_objs: list[bpy.types.Object],
             "created_bones": created,
             "dropped_bones": rig_map["dropped_bones"],
         },
-        "fit": {**fit_stats, "limb_ends": limb_stats, **reweight_stats,
-                **cfg["fit"]},
+        "fit": {**fit_stats, "tips": tip_stats, "limb_ends": limb_stats,
+                **reweight_stats, **cfg["fit"]},
+        "body_bones": len(body_bones),
         "mask": mask_stats,
         "motion": motion_stats,
         "physics": physics_stats,
