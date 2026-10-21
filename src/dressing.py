@@ -655,8 +655,12 @@ def apply_tip_fit(garment: bpy.types.Object, tgt_bvh: BVHTree,
         if loc is None or nrm.length < 1e-6:
             positions.append(v.co)
             continue
+        # Only the vertices that actually went *inside* the base body are
+        # pushed back out.  The inner side of a shoe is close to the foot
+        # but still outside it - moving that as well would flatten the shoe
+        # into a single layer.
         side = (v.co - loc).dot(nrm)
-        if side >= 0.0 and dist >= clr:
+        if side >= 0.0 or dist > 0.05:
             positions.append(v.co)
             continue
         positions.append(loc + nrm * clr)
@@ -666,7 +670,8 @@ def apply_tip_fit(garment: bpy.types.Object, tgt_bvh: BVHTree,
 
 
 def geometric_tightness(garment: bpy.types.Object, tgt_bvh: BVHTree,
-                          snug: float = 0.015) -> list[float]:
+                          body_bones: set[str], snug: float = 0.015
+                          ) -> list[float]:
     """How tight a piece of the outfit sits on the base body.
 
     The bone is a bad proxy for this: the hem of a skirt is bound to a leg
@@ -675,8 +680,16 @@ def geometric_tightness(garment: bpy.types.Object, tgt_bvh: BVHTree,
     directly - a part that already lies on the body is tight, a part that
     hangs a few centimetres away is loose and keeps its shape.
     """
+    dom = dominant_bones(garment)
     out = []
-    for v in garment.data.vertices:
+    for i, v in enumerate(garment.data.vertices):
+        # both have to hold: the part has to be driven by a body bone *and*
+        # it has to lie on the body.  A ribbon or a skirt lining hangs close
+        # to the leg but is driven by its own chain, and pulling that onto
+        # the body folds the outfit up.
+        if dom[i].split(".")[0] not in body_bones:
+            out.append(0.0)
+            continue
         loc, _n, _i, dist = tgt_bvh.find_nearest(v.co)
         out.append(1.0 if (loc is not None and dist <= snug) else 0.0)
     return out
@@ -1388,7 +1401,7 @@ def run(src_objs: list[bpy.types.Object], tgt_objs: list[bpy.types.Object],
 
     body_bones = set(rig_map["mapping"].keys())
     if cloth and cfg["fit"].get("use_tight_fit", False):
-        tightness = geometric_tightness(cloth[0], tgt_bvh,
+        tightness = geometric_tightness(cloth[0], tgt_bvh, body_bones,
                                        cfg["fit"].get("snug", 0.015))
     else:
         tightness = ([0.0] * len(cloth[0].data.vertices) if cloth else [])
