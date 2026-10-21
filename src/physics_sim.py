@@ -105,7 +105,10 @@ def setup(scene: bpy.types.Scene, arm: bpy.types.Object,
                 slots[slot_of[i]] = True
         rb.collision_collections = slots
         mode = _mode(r)
-        rb.type = 'KINEMATIC' if mode == "0" else 'ACTIVE'
+        # blender 5.x has no KINEMATIC type any more: a body stays ACTIVE and
+        # the `kinematic` flag makes it follow its animation instead of the
+        # simulation - that is MMD's mode 0 (follow bone)
+        rb.type = 'ACTIVE'
         rb.kinematic = (mode == "0")
         rb.use_deactivation = False
 
