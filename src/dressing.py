@@ -1087,6 +1087,246 @@ def fit_shoe_to_foot(garment: bpy.types.Object, tgt_body: bpy.types.Object,
             "side": side}
 
 
+def subdivide_triangles(me: bpy.types.Mesh, face_ids: list[int],
+                        uv_name: str = "UVMap") -> int:
+    """Split the given triangles into four each.
+
+    bmesh.ops.subdivide_edges only puts midpoints on the edges - the
+    triangles stay triangles and the surface does not get denser, which is
+    what made the shoe subdivision a no operation.  This one really cuts the
+    faces, and it interpolates the vertex weights and the UVs so the piece
+    keeps its rig and its texture.
+    """
+    import bmesh
+
+    if not face_ids:
+        return 0
+    bm = bmesh.new()
+    bm.from_mesh(me)
+    bm.faces.ensure_lookup_table()
+    bm.verts.ensure_lookup_table()
+    uv_layer = bm.loops.layers.uv.get(uv_name) or bm.loops.layers.uv.active
+    deform = bm.verts.layers.deform.active
+
+    faces = [bm.faces[i] for i in face_ids if i < len(bm.faces)]
+    if not faces:
+        bm.free()
+        return 0
+
+    def edge_between(face, a, b):
+        for e in face.edges:
+            if set((e.verts[0], e.verts[1])) == {a, b}:
+                return e
+        return None
+
+    # one midpoint per edge, shared by the faces that use it
+    mid: dict = {}
+    for f in faces:
+        for e in f.edges:
+            if e in mid:
+                continue
+            v1, v2 = e.verts
+            m = bm.verts.new((v1.co + v2.co) * 0.5)
+            if deform is not None:
+                w1 = dict(v1[deform].items())
+                w2 = dict(v2[deform].items())
+                for g in set(w1) | set(w2):
+                    m[deform][g] = (0.5 * w1.get(g, 0.0)
+                                     + 0.5 * w2.get(g, 0.0))
+            mid[e] = m
+
+    new_faces = []
+    for f in faces:
+        a, b, c = f.verts
+        ea, eb, ec = (edge_between(f, a, b), edge_between(f, b, c),
+                      edge_between(f, c, a))
+        if ea is None or eb is None or ec is None:
+            continue
+        ab, bc, ca = mid[ea], mid[eb], mid[ec]
+        if uv_layer is not None:
+            ua, ub, uc = (l[uv_layer].uv.copy() for l in f.loops)
+            uab = (ua + ub) * 0.5
+            ubc = (ub + uc) * 0.5
+            uca = (uc + ua) * 0.5
+        else:
+            uab = ubc = uca = None
+        for verts, uvs in (
+                ((a, ab, ca), (ua, uab, uca)),
+                ((ab, b, bc), (uab, ub, ubc)),
+                ((ca, bc, c), (uca, ubc, uc)),
+                ((ab, bc, ca), (uab, ubc, uca))):
+            nf = bm.faces.new(verts)
+            # a new face gets material 0 - without this the layer loses its
+            # material and cannot be found again
+            nf.material_index = f.material_index
+            nf.smooth = f.smooth
+            if uv_layer is not None:
+                for loop, uv in zip(nf.loops, uvs):
+                    loop[uv_layer].uv = uv
+            new_faces.append(nf)
+
+    bmesh.ops.delete(bm, geom=faces, context='FACES')
+    bm.to_mesh(me)
+    bm.free()
+    me.update()
+    return len(new_faces)
+
+
+def project_layer_on_limb(garment: bpy.types.Object, tgt_body: bpy.types.Object,
+                           tgt_arm: bpy.types.Object, side: str, material: str,
+                           ref_bones: tuple[str, ...],
+                           axis_bones: tuple[str, str] = ("下半身", "足先EX"),
+                           margin: float = 0.004, subdivide_levels: int = 2,
+                           max_dist: float = 0.12, fade_rings: int = 2
+                           ) -> dict[str, Any]:
+    """Lay a paint layer onto the base body's limb.
+
+    A paint layer (the sock) is the source's own skin painted with the outfit
+    material.  It has no thickness of its own, so it has to lie *on* the base
+    body's limb - and the base body's limb is thicker than the source's, so
+    the layer ends up buried inside it and the base body's skin shows
+    through.
+
+    The layer is subdivided first (a few hundred vertices cannot wrap a leg
+    without the surface cutting through it), then every vertex is pushed out
+    along the limb's axis onto the base body's surface plus a margin.  A
+    nearest point search would not do: the layer is *inside* the limb, and
+    the nearest surface point is then in an arbitrary direction, which folds
+    the layer up.  The radial keeps the angle and only moves the radius.
+
+    The movement fades out at the layer's border, so the cuff does not tear
+    away from the rest of the outfit.
+    """
+    gme = garment.data
+    tme = tgt_body.data
+    tdom = dominant_bones(tgt_body)
+    side_tag = "." + side
+
+    def layer_faces() -> list[int]:
+        """The layer's faces on this side - collected again every time.
+
+        Subdividing renumbers the faces, so an index list from before the
+        subdivision points at the wrong faces.
+        """
+        dom = dominant_bones(garment)
+        out = []
+        for p in gme.polygons:
+            mi = p.material_index
+            if mi >= len(gme.materials) or not gme.materials[mi]:
+                continue
+            if gme.materials[mi].name != material:
+                continue
+            verts = list(p.vertices)
+            if verts and sum(1 for v in verts if dom[v].endswith(side_tag)) \
+                    >= len(verts) * 0.5:
+                out.append(p.index)
+        return out
+
+    if not layer_faces():
+        return {"skipped": f"no {material} faces on {side}"}
+
+    # the base body's limb: the skin the leg bones drive
+    ref = {f"{b}.{side}" for b in ref_bones}
+    body_faces = []
+    for p in tme.polygons:
+        verts = list(p.vertices)
+        if verts and any(tdom[v] in ref for v in verts):
+            body_faces.append(p.index)
+    if not body_faces:
+        return {"skipped": "the base body has no leg to lay the layer on"}
+    verts = [tme.vertices[i].co.copy() for i in range(len(tme.vertices))]
+    bvh = BVHTree.FromPolygons(verts,
+                                [[i for i in tme.polygons[fi].vertices]
+                                 for fi in body_faces],
+                                all_triangles=False, epsilon=0.0)
+
+    # the limb's axis: the hip to the ankle.  The bones that drive the leg
+    # are helpers whose own axes do not follow the limb.  The hip is a centre
+    # bone in MMD, so the side suffix is optional.
+    def find_bone(name: str):
+        b = tgt_arm.data.bones.get(f"{name}.{side}")
+        if b is None:
+            b = tgt_arm.data.bones.get(name)
+        return b
+
+    hip = find_bone(axis_bones[0])
+    ankle = find_bone(axis_bones[1])
+    if hip is None or ankle is None:
+        return {"skipped": f"no limb axis on {side}"}
+    axis_origin = tgt_arm.matrix_world @ hip.head_local
+    axis_dir = (tgt_arm.matrix_world @ ankle.head_local) - axis_origin
+    if axis_dir.length < 1e-6:
+        return {"skipped": f"no limb axis on {side}"}
+    axis_dir.normalize()
+
+    added = 0
+    for _ in range(subdivide_levels):
+        own = layer_faces()
+        if not own:
+            break
+        added += subdivide_triangles(gme, own)
+    own = layer_faces()
+    if not own:
+        return {"skipped": f"no {material} faces on {side} after the subdivision"}
+
+    layer_verts = set()
+    for fi in own:
+        layer_verts.update(gme.polygons[fi].vertices)
+
+    # the border of the layer: the vertices that belong to only one of its
+    # faces.  They keep their place, everything inside moves.
+    edge_use: dict[tuple[int, int], int] = {}
+    for fi in own:
+        vs = list(gme.polygons[fi].vertices)
+        for k in range(len(vs)):
+            a, b = vs[k], vs[(k + 1) % len(vs)]
+            key = (min(a, b), max(a, b))
+            edge_use[key] = edge_use.get(key, 0) + 1
+    border = set()
+    for key, n in edge_use.items():
+        if n == 1:
+            border.update(key)
+    depth: dict[int, int] = {i: 0 for i in border}
+    for _ in range(fade_rings):
+        nxt = {}
+        for i in list(depth):
+            for e in gme.edges:
+                if e.vertices[0] == i or e.vertices[1] == i:
+                    other = e.vertices[1] if e.vertices[0] == i else e.vertices[0]
+                    if other not in depth and other in layer_verts:
+                        nxt[other] = depth[i] + 1
+        depth.update(nxt)
+    for i in layer_verts:
+        depth.setdefault(i, fade_rings + 1)
+
+    positions = [v.co.copy() for v in gme.vertices]
+    moved = 0
+    for i in layer_verts:
+        v = gme.vertices[i]
+        rel = v.co - axis_origin
+        along = rel.dot(axis_dir)
+        radial = rel - axis_dir * along
+        if radial.length < 1e-6:
+            continue
+        direction = radial.normalized()
+        origin = axis_origin + axis_dir * along
+        hit, nrm, _idx, _dist = bvh.ray_cast(origin, direction, max_dist)
+        if hit is None or nrm.length < 1e-6:
+            continue
+        rings = depth.get(i, fade_rings + 1)
+        w = min(1.0, rings / max(1, fade_rings))
+        if w <= 0.0:
+            continue
+        target = hit + nrm * margin
+        positions[i] = v.co + (target - v.co) * w
+        moved += 1
+    apply_positions(gme, positions)
+    return {"material": material, "side": side,
+            "faces": len(own), "vertices": len(layer_verts),
+            "subdivided_faces": added, "moved": moved,
+            "border_vertices": len(border)}
+
+
 # --------------------------------------------------------------------------
 # Hand and foot: lay the glove and the shoe back onto the base body
 # --------------------------------------------------------------------------
@@ -2047,6 +2287,15 @@ DEFAULT_CONFIG = {
         # Off by default: it needs the layer split from the rest of the outfit
         # first, and it does not close the front of the limb yet.
         "fit_paint_layers": [],
+        # A paint layer (the sock) is the source's own skin painted with the
+        # outfit material.  It has no thickness and the base body's limb is
+        # thicker, so the layer ends up buried inside it.
+        # Laying it on the base body's surface is the right idea, but a single
+        # axis from the hip to the ankle does not fit a leg that bends at the
+        # knee: the layer bunches up there.  The fix is the target derived
+        # patch of docs/REVIEW2.md (3.2) - copy the base body's skin patch
+        # and move the source's texture onto it.  Off until that exists.
+        "project_layers": [],
         "shoe_margin": 0.004,
         "shoe_blend_rings": 3,
         # fit the finger sleeves and the shoes onto the base body's limbs
@@ -2331,6 +2580,18 @@ def run(src_objs: list[bpy.types.Object], tgt_objs: list[bpy.types.Object],
             cloth[0], tgt_body_meshes[0], tgt_arm, spec["material"], pairs,
             margin=cfg["fit"].get("paint_margin", 0.005),
             max_factor=cfg["fit"].get("paint_max_factor", 1.35))
+
+    for spec in cfg["fit"].get("project_layers", []):
+        bones = tuple(spec.get("bones", ()))
+        if not bones:
+            continue
+        for side in ("L", "R"):
+            shoe_stats[f"project_{spec['material']}_{side}"] = (
+                project_layer_on_limb(
+                    cloth[0], tgt_body_meshes[0], tgt_arm, side, spec["material"], bones,
+                    axis_bones=tuple(spec.get("axis", ("下半身", "足先EX"))),
+                    margin=spec.get("margin", 0.004),
+                    subdivide_levels=int(spec.get("subdivide", 2))))
 
     limb_stats: dict[str, Any] = {}
     if cloth and cfg["fit"].get("fit_limb_ends", False):
