@@ -102,6 +102,60 @@ def collision_slots(r: bpy.types.Object, slot_of: dict[int, int],
     return slots
 
 
+def contact_matrix_report(rigids: list[bpy.types.Object]) -> dict[str, Any]:
+    """How far is Blender's collision rule from the MMD one?
+
+    MMD lets two bodies collide when A's mask contains B's group *and* B's
+    mask contains A's group.  Blender asks one side only, and the layer bits
+    are shared by all the bodies of a group, so a group mask cannot express
+    an arbitrary pair matrix: 355 bodies need far more than 20 layers.
+
+    So the translation is an approximation, and this measures how bad it is:
+    every pair of bodies is checked against both rules, and the pairs that
+    differ are counted and named.  Without this the physics QA would claim a
+    fidelity it does not have.
+    """
+    n = len(rigids)
+    if n < 2:
+        return {"pairs": 0}
+    data = []
+    for r in rigids:
+        rb = r.rigid_body
+        slots = list(rb.collision_collections) if rb else [False] * 20
+        data.append((r.mmd_rigid.collision_group_number,
+                     list(r.mmd_rigid.collision_group_mask),
+                     set(i for i, on in enumerate(slots) if on)))
+    false_positive = 0
+    false_negative = 0
+    expected_pairs = 0
+    by_group: dict[tuple[int, int], list[int]] = {}
+    for i in range(n):
+        gi, mi, li = data[i]
+        for j in range(i + 1, n):
+            gj, mj, lj = data[j]
+            allowed = (gj < len(mi) and mi[gj]) and (gi < len(mj) and mj[gi])
+            shared = bool(li & lj)
+            if allowed:
+                expected_pairs += 1
+            if allowed and not shared:
+                false_negative += 1
+                by_group.setdefault((gi, gj), []).append(1)
+            elif shared and not allowed:
+                false_positive += 1
+                by_group.setdefault((gi, gj), []).append(0)
+    worst = sorted(by_group.items(), key=lambda kv: len(kv[1]),
+                   reverse=True)[:10]
+    return {
+        "bodies": n,
+        "pairs": n * (n - 1) // 2,
+        "expected_contacts": expected_pairs,
+        "false_positive": false_positive,
+        "false_negative": false_negative,
+        "worst_group_pairs": [
+            {"groups": list(k), "differing": len(v)} for k, v in worst],
+    }
+
+
 def setup(scene: bpy.types.Scene, arm: bpy.types.Object,
           first_frame: int = 1, last_frame: int = 5000) -> dict[str, Any]:
     """Prepare the rigid body world so Bullet follows the MMD rules."""
@@ -176,43 +230,12 @@ def setup(scene: bpy.types.Scene, arm: bpy.types.Object,
     for r, _b, _o in follow:
         r.animation_data_clear()
         r.rotation_mode = 'QUATERNION'
-    # how far the bodies drift from the bone they follow.  MMD keeps that
-    # relation fixed, so a growing number means the simulation is pulling the
-    # colliders away from the body.
-    # The keys are written while the simulation is already running, so the
-    # first pass writes the bodies one frame behind and the second pass
-    # writes them where the simulation actually wants them.
-    max_rel_error = 0.0
-    for pass_index in range(2):
-        for r, _b, _o in follow:
-            r.animation_data_clear()
-            r.rotation_mode = 'QUATERNION'
-        if pass_index:
-            # the point cache holds the result of the last pass; without
-            # dropping it the simulation would not run again and the second
-            # pass would just copy the first one
-            cache = scene.rigidbody_world.point_cache
-            cache.frame_start = first_frame - 1
-            cache.frame_start = first_frame
-        max_rel_error = 0.0
-        for f in range(first_frame, last_frame + 1):
-            scene.frame_set(f)
-            bpy.context.view_layer.update()
-            for r, bone, offset in follow:
-                m = arm.matrix_world @ arm.pose.bones[bone].matrix
-                if pass_index and f > first_frame:
-                    got = m.inverted() @ r.matrix_world
-                    err = max(abs(got[i][j] - offset[i][j])
-                              for i in range(4) for j in range(4))
-                    max_rel_error = max(max_rel_error, err)
-                r.matrix_world = m @ offset
-                r.keyframe_insert("location", frame=f)
-                r.keyframe_insert("rotation_quaternion", frame=f)
-                r.keyframe_insert("scale", frame=f)
 
-    # the physics drives the bones again (MMD mode 1 / 2).  The bone keeps
+    # The physics drives the bones again (MMD mode 1 / 2).  The bone keeps
     # the offset it had to its rigid body in the rest pose - MMD attaches the
     # body to the bone, it does not put the bone on the body.
+    # The offsets have to be taken *before* anything is simulated: once the
+    # simulation has run, r.matrix_world is no longer the rest position.
     drive = []
     for r in rigids:
         bone = r.mmd_rigid.bone
@@ -243,11 +266,50 @@ def setup(scene: bpy.types.Scene, arm: bpy.types.Object,
             arm.pose.bones[bone].matrix = inv @ world
         bpy.context.view_layer.update()
 
+    # The handler is installed before the bodies are baked: the colliders of
+    # the mode 0 bodies have to follow the bones the physics drives, and that
+    # only works when the physics -> bone step already runs.
     for h in list(bpy.app.handlers.frame_change_post):
         if getattr(h, "__name__", "") == HANDLER_NAME:
             bpy.app.handlers.frame_change_post.remove(h)
     apply_physics.__name__ = HANDLER_NAME
     bpy.app.handlers.frame_change_post.append(apply_physics)
+
+    # how far the bodies drift from the bone they follow.  MMD keeps that
+    # relation fixed, so a growing number means the simulation is pulling the
+    # colliders away from the body.
+    # The keys are written while the simulation is already running, so the
+    # first pass writes the bodies one frame behind and the second pass
+    # writes them where the simulation actually wants them.
+    max_rel_error = 0.0
+    for pass_index in range(2):
+        for r, _b, _o in follow:
+            r.animation_data_clear()
+            r.rotation_mode = 'QUATERNION'
+        if pass_index:
+            # the point cache holds the result of the last pass; without
+            # dropping it the simulation would not run again and the second
+            # pass would just copy the first one
+            cache = scene.rigidbody_world.point_cache
+            cache.frame_start = first_frame - 1
+            cache.frame_start = first_frame
+        max_rel_error = 0.0
+        for f in range(first_frame, last_frame + 1):
+            scene.frame_set(f)
+            bpy.context.view_layer.update()
+            for r, bone, offset in follow:
+                m = arm.matrix_world @ arm.pose.bones[bone].matrix
+                if pass_index and f > first_frame:
+                    # the relation is measured on the translation: a matrix
+                    # element difference says nothing about where the
+                    # collider ended up
+                    got = m.inverted() @ r.matrix_world
+                    err = (got.translation - offset.translation).length
+                    max_rel_error = max(max_rel_error, err)
+                r.matrix_world = m @ offset
+                r.keyframe_insert("location", frame=f)
+                r.keyframe_insert("rotation_quaternion", frame=f)
+                r.keyframe_insert("scale", frame=f)
 
     # the groups do not always share a mask; the collision layers are built
     # per group, so a difference inside a group is worth reporting
@@ -262,6 +324,7 @@ def setup(scene: bpy.types.Scene, arm: bpy.types.Object,
             "driven_bones": len(drive),
             "mixed_group_masks": mixed,
             "max_follow_error": round(max_rel_error, 6),
+            "contact_matrix": contact_matrix_report(rigids),
             "frames": [first_frame, last_frame]}
 
 

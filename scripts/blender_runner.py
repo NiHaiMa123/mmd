@@ -245,13 +245,17 @@ def main() -> int:
             from src import qa
             ie.clear_scene()
             objs = ie.import_pmx(args.source)
-            result.update(qa.run_qa(objs, motions=args.motions,
-                                    out_dir=args.out,
-                                    garment_materials=_garment_materials(args.out),
-                                    physics=args.physics,
-                                    break_collision=args.break_collision,
-                                    outfit_groups=_outfit_groups(args.out)))
-            result["ok"] = True
+            report = qa.run_qa(objs, motions=args.motions,
+                               out_dir=args.out,
+                               garment_materials=_garment_materials(args.out),
+                               physics=args.physics,
+                               break_collision=args.break_collision,
+                               outfit_groups=_outfit_groups(args.out))
+            result.update(report)
+            # a QA that reported FAILED did not pass - the exit code has to
+            # say so, otherwise "0" would be read as "the check passed"
+            result["qa_status"] = report.get("status")
+            result["ok"] = report.get("status") != "FAILED"
 
         else:
             result["error"] = f"unknown mode {args.mode}"

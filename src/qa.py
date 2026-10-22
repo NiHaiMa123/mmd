@@ -290,25 +290,35 @@ def _cloth_inside_colliders(cloth_me, gfaces: list[int],
 
 # Where a body point is, so a piercing report can be read per body part.
 # The overall ratio says "something is wrong"; the breakdown says where.
-# The names are matched exactly on purpose: a prefix match on 足 also catches
-# 足D (a hip helper) and 足回転+ (the ankle), and those are not the foot.
+# The names are matched exactly: a prefix match on 足 also catches 足D (a hip
+# helper) and 足回転+ (the ankle), and those are not the foot.
 REGION_RULES = (
-    ("hand", ("人指", "中指", "薬指", "小指", "親指", "手首", "手捩")),
-    ("foot", ("足先EX", "つま先", "足親指", "足人指", "足中指", "足薬指",
-              "足小指")),
+    ("hand", ("人指1", "人指2", "人指3", "中指1", "中指2", "中指3",
+              "薬指1", "薬指2", "薬指3", "小指1", "小指2", "小指3",
+              "親指0", "親指1", "親指2", "手首", "手捩", "手捩1", "手捩2")),
+    ("foot", ("足先EX", "つま先", "足先",
+              "足親指0", "足親指1",
+              "足人指1", "足人指2", "足中指1", "足中指2",
+              "足薬指1", "足薬指2", "足小指1", "足小指2")),
     ("head", ("頭", "首")),
     ("arm", ("肩", "腕", "ひじ")),
     ("torso", ("胸", "上半身", "腹", "背")),
-    ("leg", ("ひざ", "足回転", "足首")),
-    ("waist", ("腰", "下半身", "尻", "足D", "腿")),
+    ("leg", ("ひざ", "ひざD", "ひざD+", "ひざD++", "足回転", "足回転+",
+             "足回転++", "足首", "足首D", "足首D+", "足首D++")),
+    ("waist", ("腰", "下半身", "尻", "足D", "足D+", "足D++", "腿")),
 )
 
 
 def body_region(bone_name: str) -> str:
-    """The body part a bone belongs to."""
+    """The body part a bone belongs to.
+
+    The names are matched exactly.  A prefix match is what put the hip helper
+    足D and the ankle 足回転+ into the "foot" column and made the feet look
+    like the worst part of the model.
+    """
     base = bone_name.split(".")[0]
-    for region, prefixes in REGION_RULES:
-        if any(base.startswith(p) for p in prefixes):
+    for region, names in REGION_RULES:
+        if base in names:
             return region
     return "other"
 
@@ -495,6 +505,9 @@ def physics_motion_check(objects: list[bpy.types.Object], motions: str,
         cache.frame_start = first_frame
     scene.frame_set(first_frame)
     scene.view_layers[0].update()
+    first_pos: list | None = None
+    last_pos: list | None = None
+    sample_lo, sample_hi = min(sample), max(sample)
     for f in range(first_frame, last_frame + 1):
         scene.frame_set(f)
         bpy.context.view_layer.update()
@@ -505,6 +518,15 @@ def physics_motion_check(objects: list[bpy.types.Object], motions: str,
             gme, gev = bme, bev
         else:
             gme, gev = _evaluated_mesh_copy(gmesh)
+        # the evaluated geometry has to change at all, otherwise the numbers
+        # below are measured on a model that never moved
+        step = max(1, len(gme.vertices) // 400)
+        snapshot = [gme.vertices[i].co.copy()
+                    for i in range(0, len(gme.vertices), step)]
+        if f == sample_lo:
+            first_pos = snapshot
+        if f == sample_hi:
+            last_pos = snapshot
         pierced, checked, hits = motion_mod._pierce_count(
             motion_mod._bvh_from(bme, split["skin_faces"]),
             motion_mod._bvh_from(gme, split["garment_faces"]),
@@ -539,6 +561,9 @@ def physics_motion_check(objects: list[bpy.types.Object], motions: str,
     for r in results:
         for key, n in r["regions"].items():
             totals[key] = totals.get(key, 0) + n
+    garment_motion = 0.0
+    if first_pos and last_pos and len(first_pos) == len(last_pos):
+        garment_motion = max((a - b).length for a, b in zip(first_pos, last_pos))
     return {
         "physics": True,
         "break_collision": break_collision,
@@ -551,6 +576,10 @@ def physics_motion_check(objects: list[bpy.types.Object], motions: str,
         "proxy_in_body_total": sum(r["proxy_in_body"] for r in results),
         "proxy_in_leg_total": sum(r["proxy_in_leg"] for r in results),
         "max_ratio": max((r["ratio"] for r in results), default=0.0),
+        # data integrity: if the evaluated geometry never moved, every number
+        # above was measured on a model that stood still
+        "garment_motion": round(garment_motion, 6),
+        "no_motion": garment_motion < 1e-4,
     }
 
 
@@ -645,12 +674,31 @@ def run_qa(objects: list[bpy.types.Object], motions: str | None = None,
             "detail": f"max {motion['max_ratio'] * 100:.2f}% of sampled body "
                       f"points pierce through the clothes",
         })
+        if motion.get("no_motion"):
+            # the evaluated geometry never changed: the numbers above were
+            # measured on a model that stood still, so they mean nothing
+            items.append({
+                "check": "motion_data",
+                "status": "FAILED",
+                "detail": "the evaluated model did not move - the measurement "
+                          "has no data behind it",
+            })
     else:
         items.append({"check": "motion", "status": "SKIPPED",
                       "detail": motion.get("skipped", motion.get("error", "?"))})
     report["items"] = items
-    report["status"] = ("FAILED" if any(i["status"] == "FAILED" for i in items)
-                         else "OK")
+    # "no piercing found" is not the same as "the check ran and found
+    # nothing": a check that did not run has to be UNKNOWN, not OK.  A run
+    # without a motion file did not ask for the motion check, so that is
+    # not a gap.
+    if any(i["status"] == "FAILED" for i in items):
+        report["status"] = "FAILED"
+    elif motions and any(i["status"] == "SKIPPED" for i in items):
+        report["status"] = "UNKNOWN"
+    elif any(i["status"] == "WARNING" for i in items):
+        report["status"] = "WARNING"
+    else:
+        report["status"] = "OK"
 
     if out_dir:
         out = Path(out_dir)
