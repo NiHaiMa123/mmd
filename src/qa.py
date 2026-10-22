@@ -516,6 +516,13 @@ def physics_motion_check(objects: list[bpy.types.Object], motions: str,
     # is taken off the base body's limbs while the collision layers are
     # built, not afterwards.  A switched mask on a warm cache is not the same
     # model, and comparing the two would compare two different simulations.
+    # The contact matrix wants the state *before* the simulation moves the
+    # bodies around, so their positions are read here and not afterwards.
+    from . import physics_sim as _ps
+    _rigids = [o for o in bpy.data.objects
+               if getattr(o, "mmd_type", "NONE") == "RIGID_BODY"]
+    rest_positions = {o.name: o.matrix_world.translation.copy()
+                      for o in _rigids}
     setup = physics_sim.setup(scene, arm, first_frame, last_frame,
                               outfit_groups=set(outfit_groups or []),
                               break_outfit_body=break_collision)
@@ -524,12 +531,8 @@ def physics_motion_check(objects: list[bpy.types.Object], motions: str,
         broken_info = {"outfit_groups": sorted(set(outfit_groups or [])),
                        "broken_mask_bits": setup.get("broken_mask_bits", 0)}
     # the contact matrix has to describe the state this run actually used
-    from . import physics_sim as _ps
-    _rigids = [o for o in bpy.data.objects
-               if getattr(o, "mmd_type", "NONE") == "RIGID_BODY"]
     setup["contact_matrix"] = _ps.contact_matrix_report(
-        _rigids, positions={o.name: o.matrix_world.translation
-                            for o in _rigids})
+        _rigids, positions=rest_positions)
 
     results = []
     sample = set(range(first_frame, last_frame + 1, 15))

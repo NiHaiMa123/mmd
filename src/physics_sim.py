@@ -136,6 +136,7 @@ def contact_matrix_report(rigids: list[bpy.types.Object],
     false_positive = 0
     false_negative = 0
     expected_pairs = 0
+    shared_pairs = 0
     near_fp = 0
     near_fn = 0
     near_pairs = 0
@@ -158,6 +159,8 @@ def contact_matrix_report(rigids: list[bpy.types.Object],
                         and (a - b).length <= near_dist)
             if allowed:
                 expected_pairs += 1
+            if shared:
+                shared_pairs += 1
             if allowed and not shared:
                 false_negative += 1
                 key = (min(gi, gj), max(gi, gj))
@@ -176,11 +179,19 @@ def contact_matrix_report(rigids: list[bpy.types.Object],
                 near_pairs += 1
     worst = sorted(by_group.items(), key=lambda kv: len(kv[1]),
                    reverse=True)[:10]
+    # the pairs Blender actually lets through are the ones that share a
+    # layer; that number is expected - false negative + false positive, not
+    # "all pairs"
+    if shared_pairs != expected_pairs - false_negative + false_positive:
+        raise AssertionError(
+            f"the layer pair count does not add up: {shared_pairs} shared, "
+            f"{expected_pairs} expected, {false_negative} missed, "
+            f"{false_positive} wrong")
     return {
         "bodies": n,
         "pairs": n * (n - 1) // 2,
         "expected_pmx_filter_pairs": expected_pairs,
-        "effective_blender_layer_pairs": n * (n - 1) // 2 - false_negative,
+        "effective_blender_layer_pairs": shared_pairs,
         "false_positive_layer_pairs": false_positive,
         "false_negative_layer_pairs": false_negative,
         "near_pairs": near_pairs,
@@ -321,6 +332,20 @@ def setup(scene: bpy.types.Scene, arm: bpy.types.Object,
 
     drive.sort(key=lambda item: _depth(item[1]))
 
+    # A mode 0 body that follows a bone the physics drives cannot be worked
+    # out from the animation alone - its trajectory depends on the
+    # simulation, and the simulation depends on it.  Those bodies are
+    # counted so the report can say how far the proxy can be trusted.
+    driven_bones = {bone for _r, bone, _o in drive}
+    feedback: list[str] = []
+    for _r, bone, _o in follow:
+        b = arm.data.bones.get(bone)
+        while b is not None:
+            if b.name in driven_bones:
+                feedback.append(bone)
+                break
+            b = b.parent
+
     def apply_physics(scene=None, depsgraph=None):
         # blender calls the frame change handlers with (scene, depsgraph)
         dg = depsgraph or bpy.context.evaluated_depsgraph_get()
@@ -409,6 +434,10 @@ def setup(scene: bpy.types.Scene, arm: bpy.types.Object,
             # proxy is only as good as their number allows
             "mode_counts": mode_counts,
             "mode2_bodies": mode_counts.get("2", 0),
+            # mode 0 bodies that follow a bone the physics drives: their
+            # trajectory cannot be derived from the animation alone
+            "feedback_bodies": len(feedback),
+            "feedback_bone_names": sorted(set(feedback))[:20],
             "mixed_group_masks": mixed,
             "max_follow_error": round(max_rel_error, 6),
             "worst_follow_frame": worst_frame,

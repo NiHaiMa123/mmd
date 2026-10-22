@@ -453,7 +453,8 @@ def transfer_target_weights(garment: bpy.types.Object,
                             body_bones: set[str], tightness: list[float],
                             blend: float = 0.8, max_dist: float = 0.06,
                             domains: bool = True,
-                            always_regions: list[bool] | None = None
+                            always_regions: list[bool] | None = None,
+                            keep_groups: set[str] | None = None
                             ) -> dict[str, Any]:
     """Give the tight parts of the garment the target body's weight gradient.
 
@@ -470,6 +471,10 @@ def transfer_target_weights(garment: bpy.types.Object,
     * the fingers are tight by construction, but the geometric tightness
       measure cannot tell them apart, so they need their own gate
       (`always_regions`).
+
+    `keep_groups` are the groups that are not bones at all - mmd_tools adds
+    `mmd_edge_scale` and `mmd_vertex_order` to every imported mesh and they
+    have to survive the rebuild untouched.
     """
     me = garment.data
     tme = target_body.data
@@ -534,6 +539,9 @@ def transfer_target_weights(garment: bpy.types.Object,
         for name, weight in current[vi].items():
             if name in body_bones:
                 new[name] = t * blended.get(name, 0.0) + (1.0 - t) * weight
+            elif keep_groups and name in keep_groups:
+                # not a bone - it has to stay exactly as it was
+                new[name] = weight
             else:
                 new[name] = (1.0 - t) * weight
         for name, weight in blended.items():
@@ -543,9 +551,12 @@ def transfer_target_weights(garment: bpy.types.Object,
             if name in body_bones and name not in current[vi]:
                 new[name] = new.get(name, 0.0) + t * weight
         # keep the sum at one
-        total = sum(new.values())
+        total = sum(w for n, w in new.items()
+                    if not (keep_groups and n in keep_groups))
         if total > 1e-6:
             for name in list(new):
+                if keep_groups and name in keep_groups:
+                    continue
                 new[name] /= total
         current[vi] = new
         updated += 1
@@ -654,7 +665,8 @@ def fit_limb_ends(garment: bpy.types.Object, target_body: bpy.types.Object,
 # --------------------------------------------------------------------------
 
 def subdivide_shoe(garment: bpy.types.Object, bones=("足先EX",),
-                    levels: int = 2) -> dict[str, Any]:
+                    levels: int = 2,
+                    materials=("服", "服+jinshu")) -> dict[str, Any]:
     """Subdivide the shoe's faces.
 
     The shoe is the source's own toe surface: it carries a few hundred
@@ -663,11 +675,13 @@ def subdivide_shoe(garment: bpy.types.Object, bones=("足先EX",),
     toes cut through it, because there is no vertex left to wrap them.
     Subdividing gives the fit enough vertices to do that.
 
+    The faces are picked by material *and* by bone: a skirt hem is regularly
+    bound to a foot bone to keep it out of the legs, and that hem must not
+    be blown up together with the shoe.
+
     The vertex weights and the UVs survive the subdivision, so the shoe keeps
     its rig and its texture.
     """
-    import bmesh
-
     me = garment.data
     stats: dict[str, Any] = {"levels": levels, "faces_before": len(me.polygons)}
     for level in range(levels):
@@ -676,6 +690,11 @@ def subdivide_shoe(garment: bpy.types.Object, bones=("足先EX",),
         for p in me.polygons:
             verts = list(p.vertices)
             if not verts:
+                continue
+            mi = p.material_index
+            name = (me.materials[mi].name
+                    if mi < len(me.materials) and me.materials[mi] else "")
+            if name not in materials:
                 continue
             hits = sum(1 for v in verts if dom[v].split(".")[0] in bones)
             if hits >= len(verts) * 0.5:
@@ -687,21 +706,7 @@ def subdivide_shoe(garment: bpy.types.Object, bones=("足先EX",),
                 hist[b] = hist.get(b, 0) + 1
             stats["top_bones"] = sorted(hist.items(), key=lambda kv: -kv[1])[:12]
             break
-        bm = bmesh.new()
-        bm.from_mesh(me)
-        bm.faces.ensure_lookup_table()
-        edges = set()
-        for fi in face_ids:
-            f = bm.faces[fi]
-            if f.is_valid:
-                edges.update(f.edges)
-        if not edges:
-            bm.free()
-            break
-        bmesh.ops.subdivide_edges(bm, edges=list(edges), cuts=1,
-                                  use_grid_fill=False, smooth=0.0)
-        bm.to_mesh(me)
-        bm.free()
+        stats[f"added_level{level + 1}"] = subdivide_triangles(me, face_ids)
         stats[f"faces_after_level{level + 1}"] = len(me.polygons)
     stats["faces"] = len(me.polygons)
     stats["vertices"] = len(me.vertices)
@@ -753,9 +758,10 @@ def foot_bvh(body_meshes: list[bpy.types.Object], arm: bpy.types.Object,
 
 
 def lay_shoe_on_foot(garment: bpy.types.Object, foot_bvh: BVHTree,
-                     bones=("足先EX",), margin: float = 0.004,
-                     max_dist: float = 0.06, blend_rings: int = 3,
-                     falloff: float = 0.5) -> dict[str, Any]:
+                     bones=("足先EX",), materials=("服", "服+jinshu"),
+                     margin: float = 0.004, max_dist: float = 0.06,
+                     blend_rings: int = 3, falloff: float = 0.5
+                     ) -> dict[str, Any]:
     """Put the shoe back onto the base body's foot.
 
     The shoe is the source's toe surface painted with the outfit material, so
@@ -763,14 +769,33 @@ def lay_shoe_on_foot(garment: bpy.types.Object, foot_bvh: BVHTree,
     not around it.  Its vertices are placed on the foot surface plus a small
     margin.
 
+    The faces are picked by material *and* by bone: a skirt hem is regularly
+    bound to a foot bone to keep it out of the legs, and that hem must not
+    be dragged onto the foot.
+
     The displacement is a field that fades out over the boot's shaft.  Moving
     the shoe alone would tear it away from the boot above it; letting the
     movement fade keeps the two connected.
     """
     me = garment.data
     dom = dominant_bones(garment)
-    shoe = [i for i, b in enumerate(dom) if b in bones]
-    stats: dict[str, Any] = {"shoe_vertices": len(shoe)}
+    shoe_faces = []
+    for p in me.polygons:
+        verts = list(p.vertices)
+        if not verts:
+            continue
+        mi = p.material_index
+        name = (me.materials[mi].name
+                if mi < len(me.materials) and me.materials[mi] else "")
+        if name not in materials:
+            continue
+        if sum(1 for v in verts if dom[v] in bones) >= len(verts) * 0.5:
+            shoe_faces.append(p.index)
+    shoe: set[int] = set()
+    for fi in shoe_faces:
+        shoe.update(me.polygons[fi].vertices)
+    stats: dict[str, Any] = {"shoe_vertices": len(shoe),
+                             "shoe_faces": len(shoe_faces)}
     if not shoe:
         # the names do not match: report what is there instead of failing
         hist: dict[str, int] = {}
@@ -1550,25 +1575,33 @@ def project_layer_on_limb(garment: bpy.types.Object, tgt_body: bpy.types.Object,
     # The layer keeps the *source*'s weights, so it follows the source's
     # leg and not the base body's.  A paint layer has no bones of its own,
     # so it can take the base body's skin weights outright - unless it
-    # carries a bone that is not a body bone, and that one has to survive.
+    # carries a garment bone, which has to survive.
     if target_weights and body_bones:
         gnames = [vg.name for vg in garment.vertex_groups]
-        foreign = set()
+        arm_bones = {b.name for b in tgt_arm.data.bones}
+        garment_bones: set[str] = set()
+        pseudo: set[str] = set()
         for i in layer_verts:
             for g in gme.vertices[i].groups:
                 name = gnames[g.group]
-                if name not in body_bones:
-                    foreign.add(name)
-        if foreign:
+                if name in body_bones:
+                    continue
+                if name in arm_bones:
+                    garment_bones.add(name)
+                else:
+                    # mmd_tools adds groups that are not bones at all
+                    pseudo.add(name)
+        if garment_bones:
             stats["target_weights"] = "skipped"
-            stats["foreign_bones"] = sorted(foreign)
+            stats["garment_bones"] = sorted(garment_bones)
         else:
             tightness = [0.0] * len(gme.vertices)
             for i in layer_verts:
                 tightness[i] = 1.0
             stats["target_weights"] = transfer_target_weights(
                 garment, tgt_body, body_bones, tightness, blend=1.0,
-                max_dist=0.05, domains=False)
+                max_dist=0.05, domains=False, keep_groups=pseudo or None)
+            stats["kept_groups"] = sorted(pseudo)
     return stats
 
 
@@ -2523,7 +2556,7 @@ DEFAULT_CONFIG = {
         # the boot's shaft is already torn open - this is the "shoe last"
         # work of docs/REVIEW.md (3.3) and stays off until the shoe is split
         # into its parts.
-        "fit_shoe_radius": False,
+        "fit_shoe_radius": True,
         # A paint layer (the sock) is the source's own skin with the outfit
         # material on it.  It has no thickness and the base body's limb is
         # thicker than the source's, so the layer ends up buried inside the
