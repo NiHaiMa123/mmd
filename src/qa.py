@@ -293,13 +293,13 @@ def _cloth_inside_colliders(cloth_me, gfaces: list[int],
 # The names are matched exactly: a prefix match on 足 also catches 足D (a hip
 # helper) and 足回転+ (the ankle), and those are not the foot.
 REGION_RULES = (
-    ("hand", ("人指1", "人指2", "人指3", "中指1", "中指2", "中指3",
-              "薬指1", "薬指2", "薬指3", "小指1", "小指2", "小指3",
-              "親指0", "親指1", "親指2", "手首", "手捩", "手捩1", "手捩2")),
+    ("hand", ("人指１", "人指２", "人指３", "中指１", "中指２", "中指３",
+              "薬指１", "薬指２", "薬指３", "小指１", "小指２", "小指３",
+              "親指０", "親指１", "親指２", "手首", "手捩", "手捩1", "手捩2")),
     ("foot", ("足先EX", "つま先", "足先",
-              "足親指0", "足親指1",
-              "足人指1", "足人指2", "足中指1", "足中指2",
-              "足薬指1", "足薬指2", "足小指1", "足小指2")),
+              "足親指０", "足親指１",
+              "足人指１", "足人指２", "足中指１", "足中指２",
+              "足薬指１", "足薬指２", "足小指１", "足小指２")),
     ("head", ("頭", "首")),
     ("arm", ("肩", "腕", "ひじ")),
     ("torso", ("胸", "上半身", "腹", "背")),
@@ -487,6 +487,11 @@ def physics_motion_check(objects: list[bpy.types.Object], motions: str,
         if broken_info.get("skipped"):
             return {"physics": True, "break_collision": True,
                     "skipped": broken_info["skipped"]}
+    # the contact matrix has to describe the state this run actually used
+    from . import physics_sim as _ps
+    setup["contact_matrix"] = _ps.contact_matrix_report(
+        [o for o in bpy.data.objects
+         if getattr(o, "mmd_type", "NONE") == "RIGID_BODY"])
 
     results = []
     sample = set(range(first_frame, last_frame + 1, 15))
