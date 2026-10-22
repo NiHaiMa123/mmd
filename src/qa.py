@@ -563,6 +563,8 @@ def _break_limb_collision(scene: bpy.types.Scene,
     still collides with itself, so the two runs differ only in the outfit vs
     body contact.
     """
+    from . import physics_sim
+
     rigids = [o for o in bpy.data.objects
               if getattr(o, "mmd_type", "NONE") == "RIGID_BODY"]
     if not rigids:
@@ -596,11 +598,12 @@ def _break_limb_collision(scene: bpy.types.Scene,
                 mask[o_g] = False
                 cleared += 1
         r.mmd_rigid.collision_group_mask = mask
-        slots = [False] * 20
-        for i, on in enumerate(mask):
-            if on and i in slot_of:
-                slots[slot_of[i]] = True
-        r.rigid_body.collision_collections = slots
+    # the blender collision layers have to be rebuilt with the same rule the
+    # simulation uses, otherwise the two runs would not differ at all
+    group_masks = physics_sim._group_masks(rigids)
+    for r in rigids:
+        r.rigid_body.collision_collections = physics_sim.collision_slots(
+            r, slot_of, group_masks)
     return {"outfit_groups": sorted(outfit), "body_groups": sorted(body),
             "mask_bits_cleared": cleared}
 
