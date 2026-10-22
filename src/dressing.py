@@ -1240,24 +1240,36 @@ def project_layer_on_limb(garment: bpy.types.Object, tgt_body: bpy.types.Object,
                                  for fi in body_faces],
                                 all_triangles=False, epsilon=0.0)
 
-    # the limb's axis: the hip to the ankle.  The bones that drive the leg
-    # are helpers whose own axes do not follow the limb.  The hip is a centre
-    # bone in MMD, so the side suffix is optional.
+    # the limb's axis: every bone has its own, because a leg bends at the
+    # knee.  The hip is a centre bone in MMD, so the side suffix is
+    # optional.
     def find_bone(name: str):
         b = tgt_arm.data.bones.get(f"{name}.{side}")
         if b is None:
             b = tgt_arm.data.bones.get(name)
         return b
 
-    hip = find_bone(axis_bones[0])
-    ankle = find_bone(axis_bones[1])
-    if hip is None or ankle is None:
-        return {"skipped": f"no limb axis on {side}"}
-    axis_origin = tgt_arm.matrix_world @ hip.head_local
-    axis_dir = (tgt_arm.matrix_world @ ankle.head_local) - axis_origin
-    if axis_dir.length < 1e-6:
-        return {"skipped": f"no limb axis on {side}"}
-    axis_dir.normalize()
+    def bone_axis(name: str):
+        b = find_bone(name)
+        if b is None:
+            return None
+        head = tgt_arm.matrix_world @ b.head_local
+        tail = tgt_arm.matrix_world @ b.tail_local
+        d = tail - head
+        if d.length < 1e-6:
+            return None
+        return head, d.normalized()
+
+    # a leg bends at the knee, so it has two axes: the thigh's and the
+    # shin's.  Which one a vertex uses is decided by its height, not by the
+    # bone it is bound to - the garment's thigh is bound to a hip helper
+    # whose axis points straight up.
+    thigh_axis = bone_axis("足")
+    shin_axis = bone_axis("ひざD") or bone_axis("ひざ")
+    if thigh_axis is None or shin_axis is None:
+        return {"skipped": f"no limb axes on {side}"}
+    knee = find_bone("ひざD") or find_bone("ひざ")
+    knee_z = (tgt_arm.matrix_world @ knee.head_local).z if knee else 0.0
 
     added = 0
     for _ in range(subdivide_levels):
@@ -1273,6 +1285,9 @@ def project_layer_on_limb(garment: bpy.types.Object, tgt_body: bpy.types.Object,
     for fi in own:
         layer_verts.update(gme.polygons[fi].vertices)
 
+    # the bone every layer vertex follows - kept for the report
+    dom = dominant_bones(garment)
+
     # the border of the layer: the vertices that belong to only one of its
     # faces.  They keep their place, everything inside moves.
     edge_use: dict[tuple[int, int], int] = {}
@@ -1286,7 +1301,14 @@ def project_layer_on_limb(garment: bpy.types.Object, tgt_body: bpy.types.Object,
     for key, n in edge_use.items():
         if n == 1:
             border.update(key)
-    depth: dict[int, int] = {i: 0 for i in border}
+    # Only the cuff at the top of the layer keeps its place.  The lower
+    # border sits inside the boot, and holding it there is what left the
+    # ankle bare.
+    zs = [gme.vertices[i].co.z for i in layer_verts]
+    z_lo, z_hi = (min(zs), max(zs)) if zs else (0.0, 0.0)
+    top_cut = z_hi - 0.25 * (z_hi - z_lo)
+    top_border = {i for i in border if gme.vertices[i].co.z > top_cut}
+    depth: dict[int, int] = {i: 0 for i in top_border}
     for _ in range(fade_rings):
         nxt = {}
         for i in list(depth):
@@ -1303,6 +1325,7 @@ def project_layer_on_limb(garment: bpy.types.Object, tgt_body: bpy.types.Object,
     moved = 0
     for i in layer_verts:
         v = gme.vertices[i]
+        axis_origin, axis_dir = (thigh_axis if v.co.z > knee_z else shin_axis)
         rel = v.co - axis_origin
         along = rel.dot(axis_dir)
         radial = rel - axis_dir * along
@@ -2295,7 +2318,10 @@ DEFAULT_CONFIG = {
         # knee: the layer bunches up there.  The fix is the target derived
         # patch of docs/REVIEW2.md (3.2) - copy the base body's skin patch
         # and move the source's texture onto it.  Off until that exists.
-        "project_layers": [],
+        "project_layers": [
+            {"material": "腿", "margin": 0.004, "subdivide": 2,
+             "bones": ("ひざD", "足D", "下半身", "足首D", "足先EX")},
+        ],
         "shoe_margin": 0.004,
         "shoe_blend_rings": 3,
         # fit the finger sleeves and the shoes onto the base body's limbs
