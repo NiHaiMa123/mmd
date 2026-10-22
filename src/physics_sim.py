@@ -383,13 +383,13 @@ def setup(scene: bpy.types.Scene, arm: bpy.types.Object,
             # The point cache holds the result of the last pass; without
             # dropping it the simulation would not run again and the second
             # pass would just copy the first one.  Moving the start frame
-            # and back invalidates the cache, and the world is marked dirty
-            # so bullet starts over from the first frame.
+            # and back invalidates the cache.
+            # This is not a documented "free everything" call, so the
+            # numbers it produces have to be read as a proxy and not as a
+            # proof that the solver state was rebuilt.
             cache = scene.rigidbody_world.point_cache
             cache.frame_start = first_frame - 1
             cache.frame_start = first_frame
-            scene.rigidbody_world.enabled = False
-            scene.rigidbody_world.enabled = True
         max_rel_error = 0.0
         if pass_index:
             errors = []

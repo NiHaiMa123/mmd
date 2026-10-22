@@ -521,6 +521,9 @@ def physics_motion_check(objects: list[bpy.types.Object], motions: str,
     from . import physics_sim as _ps
     _rigids = [o for o in bpy.data.objects
                if getattr(o, "mmd_type", "NONE") == "RIGID_BODY"]
+    # the bodies were just imported: without a depsgraph update their
+    # matrices are still the identity and every pair would count as "near"
+    bpy.context.view_layer.update()
     rest_positions = {o.name: o.matrix_world.translation.copy()
                       for o in _rigids}
     setup = physics_sim.setup(scene, arm, first_frame, last_frame,
