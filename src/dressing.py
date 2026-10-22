@@ -1318,9 +1318,12 @@ def subdivide_triangles(me: bpy.types.Mesh, face_ids: list[int],
 def project_layer_on_limb(garment: bpy.types.Object, tgt_body: bpy.types.Object,
                            tgt_arm: bpy.types.Object, side: str, material: str,
                            ref_bones: tuple[str, ...],
-                           axis_bones: tuple[str, str] = ("下半身", "足先EX"),
+                           axis_bones: tuple[str, str] = ("足", "ひざ"),
                            margin: float = 0.004, subdivide_levels: int = 2,
-                           max_dist: float = 0.12, fade_rings: int = 2
+                           max_dist: float = 0.12, fade_rings: int = 2,
+                           knee_band: float = 0.05,
+                           body_bones: set[str] | None = None,
+                           target_weights: bool = False
                            ) -> dict[str, Any]:
     """Lay a paint layer onto the base body's limb.
 
@@ -1337,8 +1340,12 @@ def project_layer_on_limb(garment: bpy.types.Object, tgt_body: bpy.types.Object,
     the nearest surface point is then in an arbitrary direction, which folds
     the layer up.  The radial keeps the angle and only moves the radius.
 
-    The movement fades out at the layer's border, so the cuff does not tear
-    away from the rest of the outfit.
+    A leg bends at the knee, so it has two axes: the thigh's and the shin's.
+    Switching between them at a fixed height makes the layer bunch up at the
+    knee, so the two are blended over a band around it.
+
+    The movement fades out at the layer's cuff, so it does not tear away from
+    the rest of the outfit.
     """
     gme = garment.data
     tme = tgt_body.data
@@ -1403,18 +1410,40 @@ def project_layer_on_limb(garment: bpy.types.Object, tgt_body: bpy.types.Object,
             return None
         return head, d.normalized()
 
-    # a leg bends at the knee, so it has two axes: the thigh's and the
-    # shin's.  Which one a vertex uses is decided by its height, not by the
-    # bone it is bound to.
     # The control bones (足, ひざ) follow the limb; the deformation bones
     # (足D, ひざD) are short helpers - ひざD points from the knee *upwards*,
     # and an axis built on it puts the sock's calf nowhere near the leg.
-    thigh_axis = bone_axis("足")
-    shin_axis = bone_axis("ひざ")
+    thigh_axis = bone_axis(axis_bones[0])
+    shin_axis = bone_axis(axis_bones[1])
     if thigh_axis is None or shin_axis is None:
-        return {"skipped": f"no limb axes on {side}"}
-    knee = find_bone("ひざ")
+        return {"skipped": f"no limb axes on {side}",
+                "axes": list(axis_bones)}
+    knee = find_bone(axis_bones[1])
     knee_z = (tgt_arm.matrix_world @ knee.head_local).z if knee else 0.0
+
+    def knee_weight(z: float) -> float:
+        """0 = the thigh's axis, 1 = the shin's, smooth in between."""
+        if z >= knee_z + knee_band:
+            return 0.0
+        if z <= knee_z - knee_band:
+            return 1.0
+        t = (knee_z + knee_band - z) / (2.0 * knee_band)
+        return t * t * (3.0 - 2.0 * t)
+
+    def axis_hit(axis, co: Vector):
+        """Where the layer's point lands on the base body's surface."""
+        origin0, dir0 = axis
+        rel = co - origin0
+        along = rel.dot(dir0)
+        radial = rel - dir0 * along
+        if radial.length < 1e-6:
+            return None
+        direction = radial.normalized()
+        origin = origin0 + dir0 * along
+        hit, nrm, _idx, _dist = bvh.ray_cast(origin, direction, max_dist)
+        if hit is None or nrm.length < 1e-6:
+            return None
+        return hit + nrm * margin
 
     added = 0
     for _ in range(subdivide_levels):
@@ -1468,35 +1497,79 @@ def project_layer_on_limb(garment: bpy.types.Object, tgt_body: bpy.types.Object,
 
     positions = [v.co.copy() for v in gme.vertices]
     moved = 0
+    missed = 0
+    max_disp = 0.0
+    knee_disp = 0.0
     for i in layer_verts:
         v = gme.vertices[i]
-        axis_origin, axis_dir = (thigh_axis if v.co.z > knee_z else shin_axis)
-        rel = v.co - axis_origin
-        along = rel.dot(axis_dir)
-        radial = rel - axis_dir * along
-        if radial.length < 1e-6:
-            continue
-        direction = radial.normalized()
-        origin = axis_origin + axis_dir * along
-        hit, nrm, _idx, _dist = bvh.ray_cast(origin, direction, max_dist)
-        if hit is None or nrm.length < 1e-6:
-            continue
         rings = depth.get(i, fade_rings + 1)
         w = min(1.0, rings / max(1, fade_rings))
         if w <= 0.0:
             continue
-        target = hit + nrm * margin
+        kw = knee_weight(v.co.z)
+        acc = Vector((0.0, 0.0, 0.0))
+        weight_sum = 0.0
+        if kw < 1.0:
+            hit = axis_hit(thigh_axis, v.co)
+            if hit is not None:
+                acc += hit * (1.0 - kw)
+                weight_sum += 1.0 - kw
+        if kw > 0.0:
+            hit = axis_hit(shin_axis, v.co)
+            if hit is not None:
+                acc += hit * kw
+                weight_sum += kw
+        if weight_sum <= 1e-6:
+            missed += 1
+            continue
+        target = acc / weight_sum
         positions[i] = v.co + (target - v.co) * w
         moved += 1
+        disp = (target - v.co).length * w
+        max_disp = max(max_disp, disp)
+        if abs(v.co.z - knee_z) <= knee_band:
+            knee_disp = max(knee_disp, disp)
     # The layer ends above the boot, and the base body's leg is thicker than
     # the source's, so a strip of bare skin shows in between.  Carrying the
     # lower border down the limb was tried and is worse: the stretched hem
     # pokes out of the boot's collar as spikes.
     apply_positions(gme, positions)
-    return {"material": material, "side": side,
-            "faces": len(own), "vertices": len(layer_verts),
-            "subdivided_faces": added, "moved": moved,
-            "border_vertices": len(border)}
+
+    stats = {"material": material, "side": side,
+             "axes": [axis_bones[0], axis_bones[1]],
+             "knee_z": round(knee_z, 4),
+             "knee_band": knee_band,
+             "faces": len(own), "vertices": len(layer_verts),
+             "subdivided_faces": added, "moved": moved,
+             "missed_rays": missed,
+             "max_displacement": round(max_disp, 5),
+             "knee_max_displacement": round(knee_disp, 5),
+             "hem_z": [round(z_lo, 4), round(z_hi, 4)],
+             "border_vertices": len(border)}
+
+    # The layer keeps the *source*'s weights, so it follows the source's
+    # leg and not the base body's.  A paint layer has no bones of its own,
+    # so it can take the base body's skin weights outright - unless it
+    # carries a bone that is not a body bone, and that one has to survive.
+    if target_weights and body_bones:
+        gnames = [vg.name for vg in garment.vertex_groups]
+        foreign = set()
+        for i in layer_verts:
+            for g in gme.vertices[i].groups:
+                name = gnames[g.group]
+                if name not in body_bones:
+                    foreign.add(name)
+        if foreign:
+            stats["target_weights"] = "skipped"
+            stats["foreign_bones"] = sorted(foreign)
+        else:
+            tightness = [0.0] * len(gme.vertices)
+            for i in layer_verts:
+                tightness[i] = 1.0
+            stats["target_weights"] = transfer_target_weights(
+                garment, tgt_body, body_bones, tightness, blend=1.0,
+                max_dist=0.05, domains=False)
+    return stats
 
 
 # --------------------------------------------------------------------------
@@ -2469,7 +2542,14 @@ DEFAULT_CONFIG = {
         # and move the source's texture onto it.  Off until that exists.
         "project_layers": [
             {"material": "腿", "margin": 0.004, "subdivide": 2,
-             "bones": ("ひざD", "足D", "下半身", "足首D", "足先EX")},
+             "bones": ("ひざD", "足D", "下半身", "足首D", "足先EX"),
+             # the thigh's and the shin's control bone - the deformation
+             # bones (ひざD) point upwards and make an axis that misses
+             # the leg entirely
+             "axis": ("足", "ひざ"),
+             # the layer takes the base body's skin weights, so it follows
+             # the base body's leg and not the source's
+             "target_weights": True},
         ],
         "shoe_margin": 0.004,
         "shoe_blend_rings": 3,
@@ -2764,9 +2844,12 @@ def run(src_objs: list[bpy.types.Object], tgt_objs: list[bpy.types.Object],
             shoe_stats[f"project_{spec['material']}_{side}"] = (
                 project_layer_on_limb(
                     cloth[0], tgt_body_meshes[0], tgt_arm, side, spec["material"], bones,
-                    axis_bones=tuple(spec.get("axis", ("下半身", "足先EX"))),
+                    axis_bones=tuple(spec.get("axis", ("足", "ひざ"))),
                     margin=spec.get("margin", 0.004),
-                    subdivide_levels=int(spec.get("subdivide", 2))))
+                    subdivide_levels=int(spec.get("subdivide", 2)),
+                    knee_band=float(spec.get("knee_band", 0.05)),
+                    body_bones=body_bones,
+                    target_weights=bool(spec.get("target_weights", True))))
 
     limb_stats: dict[str, Any] = {}
     if cloth and cfg["fit"].get("fit_limb_ends", False):
