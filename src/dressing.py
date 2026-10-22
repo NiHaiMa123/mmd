@@ -1345,6 +1345,10 @@ def project_layer_on_limb(garment: bpy.types.Object, tgt_body: bpy.types.Object,
         target = hit + nrm * margin
         positions[i] = v.co + (target - v.co) * w
         moved += 1
+    # The layer ends above the boot, and the base body's leg is thicker than
+    # the source's, so a strip of bare skin shows in between.  Carrying the
+    # lower border down the limb was tried and is worse: the stretched hem
+    # pokes out of the boot's collar as spikes.
     apply_positions(gme, positions)
     return {"material": material, "side": side,
             "faces": len(own), "vertices": len(layer_verts),
