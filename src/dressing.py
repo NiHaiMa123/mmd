@@ -1262,13 +1262,15 @@ def project_layer_on_limb(garment: bpy.types.Object, tgt_body: bpy.types.Object,
 
     # a leg bends at the knee, so it has two axes: the thigh's and the
     # shin's.  Which one a vertex uses is decided by its height, not by the
-    # bone it is bound to - the garment's thigh is bound to a hip helper
-    # whose axis points straight up.
+    # bone it is bound to.
+    # The control bones (足, ひざ) follow the limb; the deformation bones
+    # (足D, ひざD) are short helpers - ひざD points from the knee *upwards*,
+    # and an axis built on it puts the sock's calf nowhere near the leg.
     thigh_axis = bone_axis("足")
-    shin_axis = bone_axis("ひざD") or bone_axis("ひざ")
+    shin_axis = bone_axis("ひざ")
     if thigh_axis is None or shin_axis is None:
         return {"skipped": f"no limb axes on {side}"}
-    knee = find_bone("ひざD") or find_bone("ひざ")
+    knee = find_bone("ひざ")
     knee_z = (tgt_arm.matrix_world @ knee.head_local).z if knee else 0.0
 
     added = 0
