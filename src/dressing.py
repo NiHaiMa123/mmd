@@ -2556,7 +2556,11 @@ DEFAULT_CONFIG = {
         # the boot's shaft is already torn open - this is the "shoe last"
         # work of docs/REVIEW.md (3.3) and stays off until the shoe is split
         # into its parts.
-        "fit_shoe_radius": True,
+        # the radial want/have ratio is the wrong tool for the shoe: it needs
+        # more than 1.3 to enclose the base body's foot, and it deforms the
+        # boot without covering the toes.  Off until the shoe is fitted by
+        # anatomical landmarks (heel / ball / toe) instead.
+        "fit_shoe_radius": False,
         # A paint layer (the sock) is the source's own skin with the outfit
         # material on it.  It has no thickness and the base body's limb is
         # thicker than the source's, so the layer ends up buried inside the
