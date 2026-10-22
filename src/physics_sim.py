@@ -102,18 +102,25 @@ def collision_slots(r: bpy.types.Object, slot_of: dict[int, int],
     return slots
 
 
-def contact_matrix_report(rigids: list[bpy.types.Object]) -> dict[str, Any]:
+def contact_matrix_report(rigids: list[bpy.types.Object],
+                         positions: dict[str, Vector] | None = None,
+                         near_dist: float = 0.12) -> dict[str, Any]:
     """How far is Blender's collision rule from the MMD one?
 
-    MMD lets two bodies collide when A's mask contains B's group *and* B's
-    mask contains A's group.  Blender asks one side only, and the layer bits
-    are shared by all the bodies of a group, so a group mask cannot express
-    an arbitrary pair matrix: 355 bodies need far more than 20 layers.
+    MMD lets two bodies collide when neither of them excludes the other's
+    group.  Blender asks one side only, and the layer bits are shared by a
+    whole group, so two bodies that both allow a third group collide even
+    though MMD would keep them apart.  A group mask cannot express an
+    arbitrary pair matrix, and 355 bodies need far more than 20 layers.
 
     So the translation is an approximation, and this measures how bad it is:
     every pair of bodies is checked against both rules, and the pairs that
-    differ are counted and named.  Without this the physics QA would claim a
-    fidelity it does not have.
+    differ are counted.  Without this the physics QA would claim a fidelity
+    it does not have.
+
+    `positions` limits the report to the bodies that are actually near each
+    other: a wrong pair between a hair strand and the other leg never
+    touches, while a wrong pair at the hip decides everything.
     """
     n = len(rigids)
     if n < 2:
@@ -125,32 +132,55 @@ def contact_matrix_report(rigids: list[bpy.types.Object]) -> dict[str, Any]:
         data.append((r.mmd_rigid.collision_group_number,
                      list(r.mmd_rigid.collision_group_mask),
                      set(i for i, on in enumerate(slots) if on)))
+    by_name = {r.name: r for r in rigids}
     false_positive = 0
     false_negative = 0
     expected_pairs = 0
+    near_fp = 0
+    near_fn = 0
+    near_pairs = 0
     by_group: dict[tuple[int, int], list[int]] = {}
     for i in range(n):
         gi, mi, li = data[i]
         for j in range(i + 1, n):
             gj, mj, lj = data[j]
+            # mmd_rigid.collision_group_mask[g] is True when the two groups
+            # may collide - the PMX file stores the opposite, the groups a
+            # body does *not* collide with
             allowed = (gj < len(mi) and mi[gj]) and (gi < len(mj) and mj[gi])
             shared = bool(li & lj)
+            near = True
+            if positions is not None:
+                a = positions.get(rigids[i].name)
+                b = positions.get(rigids[j].name)
+                near = (a is not None and b is not None
+                        and (a - b).length <= near_dist)
             if allowed:
                 expected_pairs += 1
             if allowed and not shared:
                 false_negative += 1
-                by_group.setdefault((gi, gj), []).append(1)
+                by_group.setdefault((min(gi, gj), max(gi, gj)), []).append(1)
+                if near:
+                    near_fn += 1
             elif shared and not allowed:
                 false_positive += 1
-                by_group.setdefault((gi, gj), []).append(0)
+                by_group.setdefault((min(gi, gj), max(gi, gj)), []).append(0)
+                if near:
+                    near_fp += 1
+            if near:
+                near_pairs += 1
     worst = sorted(by_group.items(), key=lambda kv: len(kv[1]),
                    reverse=True)[:10]
     return {
         "bodies": n,
         "pairs": n * (n - 1) // 2,
-        "expected_contacts": expected_pairs,
-        "false_positive": false_positive,
-        "false_negative": false_negative,
+        "expected_pmx_filter_pairs": expected_pairs,
+        "effective_blender_layer_pairs": n * (n - 1) // 2 - false_negative,
+        "false_positive_layer_pairs": false_positive,
+        "false_negative_layer_pairs": false_negative,
+        "near_pairs": near_pairs,
+        "near_false_positive": near_fp,
+        "near_false_negative": near_fn,
         "worst_group_pairs": [
             {"groups": list(k), "differing": len(v)} for k, v in worst],
     }

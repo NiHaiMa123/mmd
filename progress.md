@@ -204,7 +204,37 @@ review 说"读 evaluated 对象就能拿到带修改器的网格"，实测不成
 某个第三组"就会撞上，而 MMD 要求的是"双方都允许对方所在的组"。20 个层位表达不了 355 个
 刚体的任意成对矩阵。
 
-### 修好物理初始化之后的最终 A/B（final17，两个独立冷启动进程）
+### 核验：`collision_group_mask` 的 True 到底是"允许"还是"禁止"
+
+第三轮 review 报了一个 P0-CRITICAL：说 `mmd_rigid.collision_group_mask[g] == True`
+表示"**禁止**与组 g 碰撞"，而我们的代码按"允许"解释 —— 如果真是反的，整套碰撞翻译的语义就是反的。
+
+**本机核验（Blender 5.2 扩展 `bl_ext.blender_org.mmd_tools` + PMX 格式文档）**：
+
+| 证据 | 结论 |
+|---|---|
+| PMX 格式文档：刚体数据里是 "**Non collision group** / **Non collision mask**"，"A 的 mask 勾掉组 5、组 8，意思是 A 不和 5、8 碰，其他默认可以碰"；"MMD：默认允许，逐项 deny" | **文件里的位 1 = 排除（不碰撞）** |
+| `core/pmx/importer.py`：`collision_group_mask=[rigid.collision_group_mask & (1 << i) == 0 ...]` | Blender 属性 True ⟺ 文件位 0 ⟺ **允许** |
+| `core/pmx/exporter.py`：`for i, v in enumerate(mmd_rigid.collision_group_mask): if not v: mask += 1 << i` | Blender False ⟺ 文件位 1 ⟺ 排除 ✓ 与 importer 互逆 ✓ |
+| `core/model.py`：`for n, ignore in enumerate(mask): if not ignore: continue` → 给 True 的组建禁碰约束 | **与 importer 矛盾** ✗（变量名 `ignore` 和属性文档字符串 "The groups the object can not collide with" 都指向反的方向） |
+| 达妮娅组 3（`左胸_後/回転/前`，10 个 **mode 1** 物理刚体）遮罩**全 True** | 按"允许"= 与一切碰 ✓ 合理（胸的碰撞体）；按"禁止"= 什么都不碰 ✗ 荒谬 |
+| 刻晴裙摆组 6（72 个 mode 1）遮罩 `[6]` | 按"允许"= 只与自己组碰 → **不与腿碰 → 穿腿** ✓ 与我们观察到的现象一致；按"禁止"= 与一切碰 → 不穿腿 ✗ 与观察矛盾 |
+
+**结论：review 的 P0-CRITICAL 不成立**（它依据的是属性文档字符串和 `model.py` 的变量名，
+而这两个与 importer/exporter 矛盾）。`True = 允许碰撞`，本仓库
+`physics.py` / `physics_sim.py` 的遮罩语义是自洽的 ✓ 不需要改。
+
+**但它顺带发现的另一件事是真的**：`collision_slots` 的"双向收窄"只是把 MMD 规则的一个**子集**
+编码进 20 个共享层位 —— 实测 8910 对假接触、0 对漏接触，说明这个子集仍然比 MMD 规则宽
+（两个刚体只要都允许某个第三组就会撞上）。所以带物理的 QA 仍然是**代理**，这一点已写进
+`docs/REVIEW3.md` 的三层口径里 ✓
+
+同时按 review 的意见把接触矩阵报告的口径改清楚（`expected_pmx_filter_pairs` /
+`effective_blender_layer_pairs` / `false_positive_layer_pairs` / `false_negative_layer_pairs`），
+并加了一组 **near-field** 统计：只统计初始空间里彼此在 12 cm 以内的刚体对 —— 隔着半个人
+的错误 pair 从来碰不到，而胯/膝处的少数错误 pair 影响极大。
+
+
 
 两处顺序错误修掉之后（Mode 1/2 偏移在仿真前抓取、handler 在烘焙前安装），
 又按 review 的要求把"破除"改成**在建碰撞层之前**就决定（`physics_sim.setup` 的
