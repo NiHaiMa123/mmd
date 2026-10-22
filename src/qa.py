@@ -290,14 +290,17 @@ def _cloth_inside_colliders(cloth_me, gfaces: list[int],
 
 # Where a body point is, so a piercing report can be read per body part.
 # The overall ratio says "something is wrong"; the breakdown says where.
+# The names are matched exactly on purpose: a prefix match on 足 also catches
+# 足D (a hip helper) and 足回転+ (the ankle), and those are not the foot.
 REGION_RULES = (
     ("hand", ("人指", "中指", "薬指", "小指", "親指", "手首", "手捩")),
-    ("foot", ("足", "つま先")),
+    ("foot", ("足先EX", "つま先", "足親指", "足人指", "足中指", "足薬指",
+              "足小指")),
     ("head", ("頭", "首")),
     ("arm", ("肩", "腕", "ひじ")),
     ("torso", ("胸", "上半身", "腹", "背")),
-    ("waist", ("腰", "下半身", "尻")),
-    ("leg", ("ひざ", "腿")),
+    ("leg", ("ひざ", "足回転", "足首")),
+    ("waist", ("腰", "下半身", "尻", "足D", "腿")),
 )
 
 

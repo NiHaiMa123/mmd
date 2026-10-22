@@ -21,6 +21,7 @@ P1-03 .. P1-06 of the plan. The core idea:
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 from typing import Any
 
@@ -815,6 +816,277 @@ def lay_shoe_on_foot(garment: bpy.types.Object, foot_bvh: BVHTree,
     return stats
 
 
+def foot_axis(arm: bpy.types.Object, side: str, ref_points=None):
+    """The foot's axis: the ankle at t=0, the toe tip at t=1.
+
+    The toe tip is taken from the geometry when it is available: the toe bone
+    of the base body points up and forward, so its tail sits several
+    centimetres above the actual toes and the axis would be wrong.
+    """
+    a = arm.data.bones.get(f"足首D.{side}") or arm.data.bones.get(f"足首.{side}")
+    if a is None:
+        return None
+    p0 = arm.matrix_world @ a.head_local
+    if ref_points:
+        # the model faces -Y, so the toe tip is the point that reaches
+        # furthest forward
+        tip = min(ref_points, key=lambda p: p.y)
+        d = tip - p0
+        if d.length > 1e-4:
+            return p0, d.normalized(), d.length
+    b = arm.data.bones.get(f"つま先.{side}") or arm.data.bones.get(f"足先EX.{side}")
+    if b is None:
+        return None
+    p1 = arm.matrix_world @ b.tail_local
+    d = p1 - p0
+    if d.length < 1e-6:
+        return None
+    return p0, d.normalized(), d.length
+
+
+def fit_paint_layer(garment: bpy.types.Object, tgt_body: bpy.types.Object,
+                    tgt_arm: bpy.types.Object, material: str,
+                    pairs: list[tuple[str, str]],
+                    margin: float = 0.005, percentile: float = 0.92,
+                    bins: int = 24, max_factor: float = 1.35
+                    ) -> dict[str, Any]:
+    """Push a paint layer outwards until it encloses the base body's limb.
+
+    A paint layer (the glove, the shoe, the sock) is the source's own skin with
+    the outfit material on it.  It has no thickness, so it has to lie *on* the
+    base body's limb - and the base body's limb is thicker than the source's,
+    so the layer ends up buried inside it and the base body's skin shows
+    through instead.
+
+    Here the layer is pushed outwards around the bone's axis until its cross
+    section encloses the base body's limb.  Every bone is handled on its own,
+    because a leg is not one straight tube.
+    """
+    gme = garment.data
+    gdom = dominant_bones(garment)
+    tme = tgt_body.data
+    tdom = dominant_bones(tgt_body)
+
+    layer_faces = [p.index for p in gme.polygons
+                   if p.material_index < len(gme.materials) and gme.materials[
+                       p.material_index] and gme.materials[
+                       p.material_index].name == material]
+    if not layer_faces:
+        return {"skipped": f"no faces with the material {material}"}
+    layer_verts: set[int] = set()
+    for fi in layer_faces:
+        layer_verts.update(gme.polygons[fi].vertices)
+
+    stats: dict[str, Any] = {"material": material, "faces": len(layer_faces),
+                             "bones": {}}
+    positions = [v.co.copy() for v in gme.vertices]
+    moved = 0
+    for layer_bone, ref_bone in pairs:
+        b = tgt_arm.data.bones.get(layer_bone)
+        rb = tgt_arm.data.bones.get(ref_bone)
+        if b is None or rb is None:
+            continue
+        p0 = tgt_arm.matrix_world @ b.head_local
+        p1 = tgt_arm.matrix_world @ b.tail_local
+        d = p1 - p0
+        if d.length < 1e-5:
+            continue
+        adir = d.normalized()
+        alen = d.length
+
+        # the cross section of a leg is not round, so the radii are compared
+        # per direction as well - a factor that only knows the radius leaves
+        # the layer inside the limb on the wide side
+        ang_bins = 16
+
+        def profile(verts, me, matrix):
+            out: dict[tuple[int, int], list[float]] = {}
+            for i in verts:
+                co = matrix @ me.vertices[i].co
+                rel = co - p0
+                along = rel.dot(adir)
+                radial = rel - adir * along
+                r = radial.length
+                if r < 1e-6:
+                    continue
+                ang = int((math.atan2(radial.y, radial.x) + math.pi)
+                          / (2 * math.pi) * ang_bins) % ang_bins
+                key = (int(round(along / alen * bins)), ang)
+                out.setdefault(key, []).append(r)
+            return out
+
+        lv = {i for i in layer_verts if gdom[i] == layer_bone}
+        rv = {i for i, name in enumerate(tdom) if name == ref_bone}
+        if not lv or not rv:
+            continue
+        sb = profile(lv, gme, garment.matrix_world)
+        rb = profile(rv, tme, tgt_body.matrix_world)
+
+        def pick(values: list[float]) -> float:
+            if not values:
+                return 0.0
+            values = sorted(values)
+            return values[min(len(values) - 1, int(len(values) * percentile))]
+
+        factor: dict[tuple[int, int], float] = {}
+        for k, rs in sb.items():
+            want = pick(rb.get(k, [])) + margin
+            have = pick(rs)
+            factor[k] = min(max_factor, max(1.0, want / have)) if have > 1e-6 else 1.0
+        # smooth along the limb, not across the directions
+        for _ in range(2):
+            for (k, ang), f in list(factor.items()):
+                lo = factor.get((k - 1, ang), f)
+                hi = factor.get((k + 1, ang), f)
+                factor[(k, ang)] = (lo + f * 2 + hi) / 4
+
+        n = 0
+        for i in lv:
+            co = garment.matrix_world @ gme.vertices[i].co
+            rel = co - p0
+            along = rel.dot(adir)
+            radial = rel - adir * along
+            r = radial.length
+            if r < 1e-6:
+                continue
+            ang = int((math.atan2(radial.y, radial.x) + math.pi)
+                      / (2 * math.pi) * ang_bins) % ang_bins
+            f = factor.get((int(round(along / alen * bins)), ang), 1.0)
+            if f <= 1.0005:
+                continue
+            positions[i] = garment.matrix_world.inverted() @ (p0 + adir * along + radial * f)
+            n += 1
+        moved += n
+        stats["bones"][layer_bone] = {"vertices": len(lv), "moved": n,
+                                     "max_factor": round(max(factor.values()), 3)
+                                     if factor else 1.0}
+    apply_positions(gme, positions)
+    stats["moved"] = moved
+    return stats
+
+
+def fit_shoe_to_foot(garment: bpy.types.Object, tgt_body: bpy.types.Object,
+                     tgt_arm: bpy.types.Object, side: str,
+                     materials=("服", "服+jinshu"),
+                     shoe_bones=("足先EX", "足首D", "足D"),
+                     ref_bones=("ひざ", "足先EX", "つま先", "足首D",
+                                "足親指０", "足親指１", "足人指１", "足人指２",
+                                "足中指１", "足中指２", "足薬指１", "足薬指２",
+                                "足小指１", "足小指２"),
+                     margin: float = 0.008, percentile: float = 0.92,
+                     bins: int = 48, max_factor: float = 1.3) -> dict[str, Any]:
+    """Make the shoe enclose the base body's foot.
+
+    The shoe is the source's own foot surface, so it has the source's shape.
+    The base body's foot is bigger and has five separate toes, and they stick
+    out of the shoe.  Here the shoe is pushed outwards around the foot's axis
+    until its cross section encloses the base body's leg and foot.
+
+    The shoe is picked by material *and* by the foot bones, never by the
+    bone alone: a skirt hem is regularly bound to a foot bone to keep it out
+    of the legs, and that hem must not be blown up together with the shoe.
+
+    The factor is capped: where the shoe tapers to a point and the base body
+    has a wide toe, the ratio explodes and the shoe would balloon.
+    """
+    gme = garment.data
+    gdom = dominant_bones(garment)
+    side_tag = "." + side
+    shoe_bones = {f"{b}{side_tag}" for b in shoe_bones}
+
+    shoe_faces = []
+    for p in gme.polygons:
+        verts = list(p.vertices)
+        if not verts:
+            continue
+        mi = p.material_index
+        name = gme.materials[mi].name if mi < len(gme.materials) and gme.materials[mi] else ""
+        if name not in materials:
+            continue
+        hits = sum(1 for v in verts if gdom[v] in shoe_bones)
+        if hits >= len(verts) * 0.5:
+            shoe_faces.append(p.index)
+    shoe_verts: set[int] = set()
+    for fi in shoe_faces:
+        shoe_verts.update(gme.polygons[fi].vertices)
+    if not shoe_verts:
+        return {"skipped": "no shoe faces found"}
+
+    # the base body's leg and foot: the cross section the shoe has to enclose
+    tme = tgt_body.data
+    tdom = dominant_bones(tgt_body)
+    ref_bones = {f"{b}{side_tag}" for b in ref_bones}
+    ref_verts = set()
+    for p in tme.polygons:
+        verts = list(p.vertices)
+        if verts and any(tdom[v] in ref_bones for v in verts):
+            ref_verts.update(verts)
+    if not ref_verts:
+        return {"skipped": "no leg or foot on the base body"}
+
+    ref_points = [tgt_body.matrix_world @ tme.vertices[i].co for i in ref_verts]
+    axis = foot_axis(tgt_arm, side, ref_points)
+    if axis is None:
+        return {"skipped": f"no foot axis for {side}"}
+    p0, adir, alen = axis
+
+    def profile(verts, me, matrix):
+        out: dict[int, list[float]] = {}
+        for i in verts:
+            co = matrix @ me.vertices[i].co
+            rel = co - p0
+            along = rel.dot(adir)
+            t = along / alen
+            r = (rel - adir * along).length
+            out.setdefault(int(round(t * bins)), []).append(r)
+        return out
+
+    sb = profile(shoe_verts, gme, garment.matrix_world)
+    rb = profile(ref_verts, tme, tgt_body.matrix_world)
+
+    def pick(values: list[float]) -> float:
+        if not values:
+            return 0.0
+        values = sorted(values)
+        return values[min(len(values) - 1, int(len(values) * percentile))]
+
+    factor: dict[int, float] = {}
+    for b, rs in sb.items():
+        want = pick(rb.get(b, [])) + margin
+        have = pick(rs)
+        factor[b] = min(max_factor, max(1.0, want / have)) if have > 1e-6 else 1.0
+    # smooth the factors, a step would crease the shoe
+    for _ in range(2):
+        for b in list(factor):
+            lo = factor.get(b - 1, factor[b])
+            hi = factor.get(b + 1, factor[b])
+            factor[b] = (lo + factor[b] * 2 + hi) / 4
+
+    positions = [v.co.copy() for v in gme.vertices]
+    moved = 0
+    for i in shoe_verts:
+        co = gme.vertices[i].co
+        rel = garment.matrix_world @ co - p0
+        along = rel.dot(adir)
+        t = along / alen
+        radial = rel - adir * along
+        r = radial.length
+        if r < 1e-6:
+            continue
+        b = int(round(t * bins))
+        f = factor.get(b, 1.0)
+        if f <= 1.0005:
+            continue
+        new_rel = adir * along + radial * f
+        positions[i] = garment.matrix_world.inverted() @ (p0 + new_rel)
+        moved += 1
+    apply_positions(gme, positions)
+    return {"shoe_faces": len(shoe_faces), "shoe_vertices": len(shoe_verts),
+            "reference_vertices": len(ref_verts), "moved": moved,
+            "max_factor": round(max(factor.values()), 3) if factor else 1.0,
+            "side": side}
+
+
 # --------------------------------------------------------------------------
 # Hand and foot: lay the glove and the shoe back onto the base body
 # --------------------------------------------------------------------------
@@ -1558,19 +1830,28 @@ def _is_transparent(mat: bpy.types.Material | None) -> bool:
 
     Body under a transparent garment has to stay: deleting it would make the
     cloth look hollow instead of showing the skin through the fabric.
+
+    The pmx importer leaves `blend_method` at 'HASHED' on every material -
+    that is the opaque default in Blender 5.x and says nothing about the
+    material being see through.  Only 'BLEND' does, and that is what mmd_tools
+    sets for a material with the semi transparent draw mode.  Reading
+    'HASHED' as transparent made the whole body mask a no operation.
     """
     if mat is None:
         return True
     try:
         mmd = mat.mmd_material
-        if getattr(mmd, "alpha_mode", "OPAQUE") == "BLEND":
-            return True
         if getattr(mmd, "alpha", 1.0) < 0.99:
             return True
     except Exception:
         pass
     try:
-        if mat.blend_method in ('BLEND', 'HASHED', 'CLIP'):
+        if mat.blend_method == 'BLEND':
+            return True
+    except Exception:
+        pass
+    try:
+        if getattr(mat, "surface_render_method", "") == 'BLENDED':
             return True
     except Exception:
         pass
@@ -1751,6 +2032,21 @@ DEFAULT_CONFIG = {
         # Off by default until the semantic parts are separated.
         "subdivide_shoe": 0,
         "lay_shoe_on_foot": False,
+        # The shoe is the source's foot surface: it has the source's shape,
+        # the base body's foot is bigger.  Pushing the shoe outwards around
+        # the foot's axis helps a little but does not close the toe cap, and
+        # the boot's shaft is already torn open - this is the "shoe last"
+        # work of docs/REVIEW.md (3.3) and stays off until the shoe is split
+        # into its parts.
+        "fit_shoe_radius": False,
+        # A paint layer (the sock) is the source's own skin with the outfit
+        # material on it.  It has no thickness and the base body's limb is
+        # thicker than the source's, so the layer ends up buried inside the
+        # limb and the base body's skin shows through.  This pushes the layer
+        # out until its cross section encloses the limb.
+        # Off by default: it needs the layer split from the rest of the outfit
+        # first, and it does not close the front of the limb yet.
+        "fit_paint_layers": [],
         "shoe_margin": 0.004,
         "shoe_blend_rings": 3,
         # fit the finger sleeves and the shoes onto the base body's limbs
@@ -2021,6 +2317,21 @@ def run(src_objs: list[bpy.types.Object], tgt_objs: list[bpy.types.Object],
                 margin=cfg["fit"].get("shoe_margin", 0.004),
                 blend_rings=int(cfg["fit"].get("shoe_blend_rings", 3)))
 
+    if cloth and cfg["fit"].get("fit_shoe_radius", False):
+        for side in ("L", "R"):
+            shoe_stats[f"radius_{side}"] = fit_shoe_to_foot(
+                cloth[0], tgt_body_meshes[0], tgt_arm, side,
+                margin=cfg["fit"].get("shoe_radius_margin", 0.008))
+
+    for spec in cfg["fit"].get("fit_paint_layers", []):
+        pairs = [tuple(p) for p in spec.get("pairs", [])]
+        if not pairs:
+            continue
+        shoe_stats[f"paint_{spec['material']}"] = fit_paint_layer(
+            cloth[0], tgt_body_meshes[0], tgt_arm, spec["material"], pairs,
+            margin=cfg["fit"].get("paint_margin", 0.005),
+            max_factor=cfg["fit"].get("paint_max_factor", 1.35))
+
     limb_stats: dict[str, Any] = {}
     if cloth and cfg["fit"].get("fit_limb_ends", False):
         limb_stats = fit_limb_ends(cloth[0], tgt_body_meshes[0], tgt_arm, tgt_bvh,
@@ -2070,6 +2381,7 @@ def run(src_objs: list[bpy.types.Object], tgt_objs: list[bpy.types.Object],
     if cfg["body_mask"]["enabled"] and cloth:
         garment_bvh = build_bvh(cloth[0])
         method = cfg["body_mask"].get("method", "direct")
+        z_limit = neck_height(tgt_arm)
         if method == "source":
             # the coverage was measured in the source's coordinates, before
             # the retarget moved the garment
@@ -2080,7 +2392,23 @@ def run(src_objs: list[bpy.types.Object], tgt_objs: list[bpy.types.Object],
                                           garment_bvh=garment_bvh,
                                           snug_dist=cfg["body_mask"].get(
                                               "snug_dist", 0.02))
-            pass
+            # 刻晴's glove, shoe and sock are her own skin painted with the
+            # outfit material: there is no separate skin face under them, so
+            # the coverage of those parts comes out empty and the base body's
+            # foot stays visible inside the shoe.  Measuring it directly on
+            # the base body finds them.
+            direct, covered_points = mask_by_garment(
+                tgt_body_meshes[0], cloth[0], garment_bvh,
+                max_dist=cfg["body_mask"].get("cover_dist", 0.015))
+            direct = [fi for fi in direct
+                      if (tgt_body_meshes[0].matrix_world
+                          @ tgt_body_meshes[0].data.polygons[fi].center).z
+                      <= z_limit]
+            mask_stats["covered_points"] = covered_points
+            mask_stats["direct_faces"] = len(direct)
+            mask_stats["source_faces"] = len(to_delete)
+            to_delete = sorted(set(to_delete) | set(direct))
+            mask_stats["method"] = "source+direct"
         else:
             # direct: the body that the clothes really cover on the target
             to_delete, covered_points = mask_by_garment(

@@ -47,6 +47,15 @@ python -m src.cli dress --source assets/source.pmx --target assets/base.pmx --ou
 # 静态 / 动作检查
 python -m src.cli qa --model outputs/dress01/model.pmx --motions assets/motions/ --out outputs/dress01
 
+# 带 MMD 物理的穿模检测：在 Blender 里跑 Bullet，把仿真结果写回骨骼后再测
+python -m src.cli qa --model outputs/dress01/model.pmx --motions assets/motions/x.vmd --physics --out outputs/dress01/qa_phys
+
+# 同一模型的「碰撞组翻译前」对照：只拆掉服装↔身体这一层碰撞关系，其余不变
+python -m src.cli qa --model outputs/dress01/model.pmx --motions assets/motions/x.vmd --physics --break-collision --out outputs/dress01/qa_phys_broken
+
+# 各部位的特写（手/脚/头/腰/裙…），用来核对"装上去之后长什么样"
+python -m src.cli closeup --model outputs/dress01/model.pmx --out outputs/closeup --regions foot_l,hand_l,waist --views front,left,q_left,top
+
 # 高风险姿势测试集（8 类），输出每个姿势的穿模数与截图
 python -m src.cli motion-check --model outputs/dress01/model.pmx --out outputs/dress01/poses
 
@@ -139,13 +148,21 @@ p' = Σ w_i · D(bone_i) · p
 贴身区拉到目标身体表面 + 5 mm，宽松区保持来源轮廓（裙摆、喇叭袖不会被压到腿上）。
 
 **身体遮蔽**。先在来源模型上按顶点测「是否被衣服盖住」（衣服近且在身体外侧），
-再用 KD 树把这份覆盖率映射到目标身体并删面；腐蚀一圈，领口/袖口/下沿保留皮肤。
-长发落在衣服里的部分单独检测后删除。
+再用 KD 树把这份覆盖率映射到目标身体；**同时**在目标上直接再测一次。
+两次都要：刻晴的手套、鞋、过膝袜是「漆皮层」——她身体表面本身刷了服装材质，
+来源模型在这些部位**没有独立的皮肤面**，只靠来源覆盖率会算成 0，目标裸脚就一直露在靴子里。
+直接法补上这一块（`cover_dist` 12 mm + 领口/袖口 3 cm 的开口余量）。
 
 **穿模检测**。身体被遮蔽挖了洞之后，「点在身体内」这种奇偶判定就不成立了；
 而且衣服是单面壳，也没有内外之分。实际用的是：静置姿态下衣服永远在身体外侧，
 记下这个方向；动作里如果身体顶点相对衣服法线的方向翻转了、而且衣服就在 6 mm 以内，
 才算真的穿出。静置姿态下这个判据 0 误报。
+
+**带物理的检测**。MMD 的碰撞组和遮罩在 Blender 里没有对应物，所以 `src/physics_sim.py`
+把 MMD 的 group/mask 翻译成 Blender 的碰撞集合，让 Bullet 跑起来，再把仿真结果写回骨骼。
+两个坑必须记住：MMD 要求**双方都允许**才算相撞，Blender 只要一方允许就撞（实测），
+所以集合要按刚体收窄；`new_from_object` 读原始对象得到的是**未变形**的网格，
+物理路径必须用 `evaluated.to_mesh()`。
 
 **自动修复**。穿模的修法就是「把露出来的身体再遮掉」：取最差的那几个姿势（或真实动作的
 最差几帧），把该状态下穿出的身体面删掉（扩大 Mask），再跑一遍全部姿势/帧对比。
@@ -177,3 +194,7 @@ mmd/
 - 源文件永远不会被修改：程序一律「导入 → 另存」。
 - 第三方模型只在本机使用，`.gitignore` 已经排除 `assets/*` 和 `outputs/`。
 - Blender 5.x 的两个坑（后台模式 `object.select_all` 报错、`export_pmx` 的 poll 要求活动对象是 MMD 根物体）已在代码里处理，改动相关代码时请留意。
+- 碰撞/物理相关的数字都要看 `progress.md` 里的说明：Blender 的刚体过滤是**单向**的，
+  MMD 是**双向**的，所以带物理的 QA 是「代理仿真」，不能当成 MMD 本体的验收。
+- 外部代码审查见 [`docs/REVIEW.md`](docs/REVIEW.md)，里面列了还没做完的部分
+  （漆皮类服装的 body-derived shell、鞋楦变形、带物理的 A/B 方法论）。
