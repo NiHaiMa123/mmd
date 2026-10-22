@@ -480,13 +480,17 @@ def physics_motion_check(objects: list[bpy.types.Object], motions: str,
     except Exception as exc:                        # noqa: BLE001
         return {"error": f"vmd import failed: {type(exc).__name__}: {exc}"}
 
-    setup = physics_sim.setup(scene, arm, first_frame, last_frame)
+    # The counterfactual is decided before the simulation starts: the outfit
+    # is taken off the base body's limbs while the collision layers are
+    # built, not afterwards.  A switched mask on a warm cache is not the same
+    # model, and comparing the two would compare two different simulations.
+    setup = physics_sim.setup(scene, arm, first_frame, last_frame,
+                              outfit_groups=set(outfit_groups or []),
+                              break_outfit_body=break_collision)
     broken_info: dict[str, Any] = {}
     if break_collision:
-        broken_info = _break_limb_collision(scene, set(outfit_groups or []))
-        if broken_info.get("skipped"):
-            return {"physics": True, "break_collision": True,
-                    "skipped": broken_info["skipped"]}
+        broken_info = {"outfit_groups": sorted(set(outfit_groups or [])),
+                       "broken_mask_bits": setup.get("broken_mask_bits", 0)}
     # the contact matrix has to describe the state this run actually used
     from . import physics_sim as _ps
     setup["contact_matrix"] = _ps.contact_matrix_report(
@@ -586,63 +590,6 @@ def physics_motion_check(objects: list[bpy.types.Object], motions: str,
         "garment_motion": round(garment_motion, 6),
         "no_motion": garment_motion < 1e-4,
     }
-
-
-def _break_limb_collision(scene: bpy.types.Scene,
-                          outfit_groups: set[int] | None) -> dict[str, Any]:
-    """Undo the collision group translation: the outfit never touches the body.
-
-    Before the translation the outfit's masks did not contain the groups of the
-    base body's limbs, so the skirt swung straight through the legs.  The
-    translation opened the outfit against the limb groups and the body against
-    the outfit groups.  This removes exactly that one relation and leaves every
-    other collision alone - the outfit still collides with itself and the body
-    still collides with itself, so the two runs differ only in the outfit vs
-    body contact.
-    """
-    from . import physics_sim
-
-    rigids = [o for o in bpy.data.objects
-              if getattr(o, "mmd_type", "NONE") == "RIGID_BODY"]
-    if not rigids:
-        return {"skipped": "no rigid bodies in the scene"}
-    groups = {r.mmd_rigid.collision_group_number for r in rigids}
-    if not outfit_groups:
-        return {"skipped": "the outfit's collision groups are unknown - the "
-                           "manifest of the dress run is needed"}
-    outfit = set(outfit_groups) & groups
-    body = groups - outfit
-    if not outfit or not body:
-        return {"skipped": f"cannot tell outfit {sorted(outfit)} from body "
-                           f"{sorted(body)}"}
-
-    root = scene.rigidbody_world.collection
-    children = list(root.children)
-    slot_of: dict[int, int] = {}
-    for g in sorted(groups):
-        coll = bpy.data.collections.get(f"mmd_grp_{g}")
-        if coll is not None and coll in children:
-            slot_of[g] = children.index(coll)
-
-    cleared = 0
-    for r in rigids:
-        g = r.mmd_rigid.collision_group_number
-        mask = list(r.mmd_rigid.collision_group_mask)
-        # the outfit loses the body's groups, the body loses the outfit's
-        other = body if g in outfit else outfit
-        for o_g in other:
-            if o_g < len(mask) and mask[o_g]:
-                mask[o_g] = False
-                cleared += 1
-        r.mmd_rigid.collision_group_mask = mask
-    # the blender collision layers have to be rebuilt with the same rule the
-    # simulation uses, otherwise the two runs would not differ at all
-    group_masks = physics_sim._group_masks(rigids)
-    for r in rigids:
-        r.rigid_body.collision_collections = physics_sim.collision_slots(
-            r, slot_of, group_masks)
-    return {"outfit_groups": sorted(outfit), "body_groups": sorted(body),
-            "mask_bits_cleared": cleared}
 
 
 def run_qa(objects: list[bpy.types.Object], motions: str | None = None,

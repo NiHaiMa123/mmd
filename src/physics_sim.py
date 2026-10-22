@@ -157,12 +157,35 @@ def contact_matrix_report(rigids: list[bpy.types.Object]) -> dict[str, Any]:
 
 
 def setup(scene: bpy.types.Scene, arm: bpy.types.Object,
-          first_frame: int = 1, last_frame: int = 5000) -> dict[str, Any]:
-    """Prepare the rigid body world so Bullet follows the MMD rules."""
+          first_frame: int = 1, last_frame: int = 5000,
+          outfit_groups: set[int] | None = None,
+          break_outfit_body: bool = False) -> dict[str, Any]:
+    """Prepare the rigid body world so Bullet follows the MMD rules.
+
+    `break_outfit_body` switches the outfit off the base body's limbs before
+    the collision layers are built.  It has to happen *here*: a counterfactual
+    that is switched on after the simulation has already run is not the same
+    model, it is the same model with a warmed up cache.
+    """
     rigids = _rigids()
     if not rigids:
         return {"skipped": "no rigid bodies in the scene"}
     bones = set(arm.data.bones.keys())
+
+    broken_bits = 0
+    if break_outfit_body and outfit_groups:
+        outfit = set(outfit_groups)
+        body = {r.mmd_rigid.collision_group_number for r in rigids} - outfit
+        for r in rigids:
+            g = r.mmd_rigid.collision_group_number
+            mask = list(r.mmd_rigid.collision_group_mask)
+            # the outfit loses the body's groups, the body loses the outfit's
+            other = body if g in outfit else outfit
+            for og in other:
+                if og < len(mask) and mask[og]:
+                    mask[og] = False
+                    broken_bits += 1
+            r.mmd_rigid.collision_group_mask = mask
 
     if scene.rigidbody_world is None:
         bpy.ops.rigidbody.world_add()
@@ -324,6 +347,7 @@ def setup(scene: bpy.types.Scene, arm: bpy.types.Object,
             "driven_bones": len(drive),
             "mixed_group_masks": mixed,
             "max_follow_error": round(max_rel_error, 6),
+            "broken_mask_bits": broken_bits,
             "contact_matrix": contact_matrix_report(rigids),
             "frames": [first_frame, last_frame]}
 
