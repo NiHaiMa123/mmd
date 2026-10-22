@@ -553,10 +553,25 @@ def transfer_target_weights(garment: bpy.types.Object,
         if not blended:
             no_real_bone += 1
             continue
+        # The bones that have to survive take their share of the weight sum
+        # first, the base body's weights fill what is left.  Without that the
+        # normalisation at the end would quietly scale the garment bones as
+        # well.
+        skin_bones = body_bones if target_bones is None else target_bones
+        budget = 1.0
+        if keep_bones:
+            kept = sum(w for n, w in current[vi].items()
+                       if n in keep_bones)
+            budget = max(0.0, 1.0 - kept)
         new: dict[str, float] = {}
         for name, weight in current[vi].items():
-            if name in body_bones:
-                new[name] = t * blended.get(name, 0.0) + (1.0 - t) * weight
+            if name in skin_bones:
+                # The base body's weight decides.  A helper bone of the
+                # target that the vertex already carried must not be scaled
+                # to nothing just because it was not in the source's
+                # mapping - that loses the target's real influence.
+                new[name] = budget * (t * blended.get(name, 0.0)
+                                      + (1.0 - t) * weight)
             elif keep_bones and name in keep_bones:
                 # a bone with a meaning of its own: it keeps its weight
                 new[name] = weight
@@ -566,12 +581,10 @@ def transfer_target_weights(garment: bpy.types.Object,
             else:
                 new[name] = (1.0 - t) * weight
         for name, weight in blended.items():
-            # a body bone the garment did not carry yet: it comes from the
-            # target only.  A bone that was already there was mixed in above,
-            # adding it again would turn t into 2t.
-            allowed = body_bones if target_bones is None else target_bones
-            if name in allowed and name not in current[vi]:
-                new[name] = new.get(name, 0.0) + t * weight
+            # a bone of the base body the garment did not carry yet: it
+            # comes from the target only
+            if name in skin_bones and name not in new:
+                new[name] = budget * t * weight
         # keep the sum at one
         total = sum(w for n, w in new.items()
                     if not (keep_groups and n in keep_groups))
