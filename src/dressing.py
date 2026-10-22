@@ -1089,13 +1089,28 @@ def fit_shoe_to_foot(garment: bpy.types.Object, tgt_body: bpy.types.Object,
 
 def subdivide_triangles(me: bpy.types.Mesh, face_ids: list[int],
                         uv_name: str = "UVMap") -> int:
-    """Split the given triangles into four each.
+    """Split the given faces into smaller ones and keep every attribute.
 
-    bmesh.ops.subdivide_edges only puts midpoints on the edges - the
-    triangles stay triangles and the surface does not get denser, which is
-    what made the shoe subdivision a no operation.  This one really cuts the
-    faces, and it interpolates the vertex weights and the UVs so the piece
-    keeps its rig and its texture.
+    The layer has to get dense enough to wrap a leg, and it has to keep its
+    rig, its texture and its morphs while it does.
+
+    Three things are easy to get wrong here, and all of them are silent:
+
+    * A new vertex in the middle of an edge that a face *outside* the
+      selection still uses is a T-junction.  The two sides of that edge stop
+      being connected, and the surface tears as soon as the weights or the
+      morphs differ across it.  So an edge that a face outside the selection
+      shares is left alone - the faces next to it are split from a new
+      vertex in their middle instead of from a midpoint on that edge.
+    * Only one UV layer would be interpolated and the morphs would be
+      dropped, so a model with a shape key would export broken.
+    * A new vertex starts at (0, 0, 0) in every shape key, and the shape
+      layers hold absolute positions, so every one of them has to be written
+      back by hand.
+
+    bmesh.ops.subdivide_edges does not cut the triangles (it only puts
+    midpoints on the edges, the surface stays as coarse as it was), which is
+    why the faces are split by hand here.
     """
     import bmesh
 
@@ -1105,67 +1120,195 @@ def subdivide_triangles(me: bpy.types.Mesh, face_ids: list[int],
     bm.from_mesh(me)
     bm.faces.ensure_lookup_table()
     bm.verts.ensure_lookup_table()
-    uv_layer = bm.loops.layers.uv.get(uv_name) or bm.loops.layers.uv.active
-    deform = bm.verts.layers.deform.active
 
-    faces = [bm.faces[i] for i in face_ids if i < len(bm.faces)]
-    if not faces:
+    uv_layers = list(bm.loops.layers.uv)
+    deform = bm.verts.layers.deform.active
+    shape_layers = list(bm.verts.layers.shape)
+
+    sel_ids = [i for i in face_ids if 0 <= i < len(bm.faces)]
+    if not sel_ids:
         bm.free()
         return 0
+    sel_set = set(sel_ids)
 
-    def edge_between(face, a, b):
-        for e in face.edges:
-            if set((e.verts[0], e.verts[1])) == {a, b}:
-                return e
-        return None
+    def edge_key(a: int, b: int) -> tuple[int, int]:
+        return (a, b) if a < b else (b, a)
 
-    # one midpoint per edge, shared by the faces that use it
-    mid: dict = {}
-    for f in faces:
-        for e in f.edges:
-            if e in mid:
-                continue
-            v1, v2 = e.verts
-            m = bm.verts.new((v1.co + v2.co) * 0.5)
-            if deform is not None:
-                w1 = dict(v1[deform].items())
-                w2 = dict(v2[deform].items())
-                for g in set(w1) | set(w2):
-                    m[deform][g] = (0.5 * w1.get(g, 0.0)
-                                     + 0.5 * w2.get(g, 0.0))
-            mid[e] = m
+    # ---- capture everything before the mesh is touched --------------------
+    def vert_data(v):
+        d = {"co": v.co.copy()}
+        if deform is not None:
+            d["w"] = dict(v[deform].items())
+        if shape_layers:
+            # a bmesh shape layer holds the *absolute* position of the vertex
+            # in that shape key
+            d["s"] = {lay.name: Vector(v[lay]) for lay in shape_layers}
+        return d
 
-    new_faces = []
-    for f in faces:
-        a, b, c = f.verts
-        ea, eb, ec = (edge_between(f, a, b), edge_between(f, b, c),
-                      edge_between(f, c, a))
-        if ea is None or eb is None or ec is None:
+    face_info: list[dict[str, Any]] = []
+    edge_use: dict[tuple[int, int], int] = {}
+    for fi in sel_ids:
+        f = bm.faces[fi]
+        corners = [v.index for v in f.verts]
+        uvs = {lay.name: [Vector(l[lay].uv) for l in f.loops] for lay in uv_layers}
+        face_info.append({"corners": corners, "uvs": uvs,
+                          "material": f.material_index, "smooth": f.smooth})
+        n = len(corners)
+        for k in range(n):
+            key = edge_key(corners[k], corners[(k + 1) % n])
+            edge_use[key] = edge_use.get(key, 0) + 1
+
+    involved: set[int] = set()
+    for info in face_info:
+        involved.update(info["corners"])
+    src = {i: vert_data(bm.verts[i]) for i in involved}
+
+    # ---- the edges a face outside the selection shares with us -----------
+    # Those keep their length: a midpoint on them would be a T-junction.
+    outside_users: dict[tuple[int, int], int] = {}
+    for e in bm.edges:
+        key = edge_key(e.verts[0].index, e.verts[1].index)
+        if key not in edge_use:
             continue
-        ab, bc, ca = mid[ea], mid[eb], mid[ec]
-        if uv_layer is not None:
-            ua, ub, uc = (l[uv_layer].uv.copy() for l in f.loops)
-            uab = (ua + ub) * 0.5
-            ubc = (ub + uc) * 0.5
-            uca = (uc + ua) * 0.5
-        else:
-            uab = ubc = uca = None
-        for verts, uvs in (
-                ((a, ab, ca), (ua, uab, uca)),
-                ((ab, b, bc), (uab, ub, ubc)),
-                ((ca, bc, c), (uca, ubc, uc)),
-                ((ab, bc, ca), (uab, ubc, uca))):
-            nf = bm.faces.new(verts)
-            # a new face gets material 0 - without this the layer loses its
-            # material and cannot be found again
-            nf.material_index = f.material_index
-            nf.smooth = f.smooth
-            if uv_layer is not None:
-                for loop, uv in zip(nf.loops, uvs):
-                    loop[uv_layer].uv = uv
+        outside = sum(1 for f in e.link_faces if f.index not in sel_set)
+        if outside:
+            outside_users[key] = outside
+    keep_edge = {k for k, n in outside_users.items() if edge_use[k] == 1}
+
+    # ---- one midpoint per edge, shared by the faces that use it ----------
+    mid_co: dict[tuple[int, int], Vector] = {}
+    mid_w: dict[tuple[int, int], dict[str, float]] = {}
+    mid_s: dict[tuple[int, int], dict[str, Vector]] = {}
+    for key in edge_use:
+        if key in keep_edge:
+            continue
+        a, b = src[key[0]], src[key[1]]
+        mid_co[key] = (a["co"] + b["co"]) * 0.5
+        if deform is not None:
+            w: dict[str, float] = {}
+            for g in set(a["w"]) | set(b["w"]):
+                w[g] = 0.5 * a["w"].get(g, 0.0) + 0.5 * b["w"].get(g, 0.0)
+            mid_w[key] = w
+        if shape_layers:
+            s: dict[str, Vector] = {}
+            for lay in shape_layers:
+                s[lay.name] = (a["s"][lay.name] + b["s"][lay.name]) * 0.5
+            mid_s[key] = s
+
+    # ---- create the midpoints --------------------------------------------
+    mid_index: dict[tuple[int, int], int] = {}
+    for key, co in mid_co.items():
+        v = bm.verts.new(co)
+        if deform is not None:
+            for g, val in mid_w[key].items():
+                v[deform][g] = val
+        for lay in shape_layers:
+            v[lay] = mid_s[key][lay.name]
+        mid_index[key] = len(bm.verts) - 1
+    bm.verts.ensure_lookup_table()
+
+    # ---- the centre of every face that cannot be split into four --------
+    # They are all created up front: adding a vertex invalidates the lookup
+    # table that the face creation below relies on.
+    for info in face_info:
+        corners = info["corners"]
+        n = len(corners)
+        keys = [edge_key(corners[k], corners[(k + 1) % n]) for k in range(n)]
+        if n == 3 and all(k in mid_index for k in keys):
+            continue
+        centre = bm.verts.new(Vector((0.0, 0.0, 0.0)))
+        acc = Vector((0.0, 0.0, 0.0))
+        for ci in corners:
+            acc += src[ci]["co"]
+        centre.co = acc / len(corners)
+        if deform is not None:
+            wsum: dict[str, float] = {}
+            for ci in corners:
+                for g, val in src[ci]["w"].items():
+                    wsum[g] = wsum.get(g, 0.0) + val / len(corners)
+            for g, val in wsum.items():
+                centre[deform][g] = val
+        for lay in shape_layers:
+            acc = Vector((0.0, 0.0, 0.0))
+            for ci in corners:
+                acc += src[ci]["s"][lay.name]
+            centre[lay] = acc / len(corners)
+        info["centre"] = centre
+    bm.verts.ensure_lookup_table()
+
+    # ---- the new faces ----------------------------------------------------
+    new_faces: list[Any] = []
+    for info in face_info:
+        corners = info["corners"]
+        uvs = info["uvs"]
+        n = len(corners)
+        if n < 3:
+            continue
+        keys = [edge_key(corners[k], corners[(k + 1) % n]) for k in range(n)]
+        if n == 3 and all(k in mid_index for k in keys):
+            # the plain 1 -> 4 split
+            a, b, c = corners
+            ab = mid_index[keys[0]]
+            bc = mid_index[keys[1]]
+            ca = mid_index[keys[2]]
+            plan = (
+                ((a, ab, ca),
+                 lambda u: (u[0], (u[0] + u[1]) * 0.5, (u[2] + u[0]) * 0.5)),
+                ((ab, b, bc),
+                 lambda u: ((u[0] + u[1]) * 0.5, u[1], (u[1] + u[2]) * 0.5)),
+                ((ca, bc, c),
+                 lambda u: ((u[2] + u[0]) * 0.5, (u[1] + u[2]) * 0.5, u[2])),
+                ((ab, bc, ca),
+                 lambda u: ((u[0] + u[1]) * 0.5, (u[1] + u[2]) * 0.5,
+                            (u[2] + u[0]) * 0.5)),
+            )
+            for tri, pick in plan:
+                nf = bm.faces.new([bm.verts[i] for i in tri])
+                nf.material_index = info["material"]
+                nf.smooth = info["smooth"]
+                for lay in uv_layers:
+                    values = pick(uvs[lay.name])
+                    for loop, value in zip(nf.loops, values):
+                        loop[lay].uv = value
+                new_faces.append(nf)
+            continue
+        # a fan from a new vertex in the middle.  The boundary of the face
+        # keeps the edges that a face outside the selection shares, so the
+        # two sides of those edges stay connected.
+        centre = info["centre"]
+        seq: list[int] = []
+        for k in range(n):
+            seq.append(corners[k])
+            if keys[k] in mid_index:
+                seq.append(mid_index[keys[k]])
+        seq_uv: dict[str, list[Vector]] = {}
+        for lay in uv_layers:
+            u = uvs[lay.name]
+            vals: list[Vector] = []
+            for k in range(n):
+                vals.append(u[k])
+                if keys[k] in mid_index:
+                    vals.append((u[k] + u[(k + 1) % n]) * 0.5)
+            seq_uv[lay.name] = vals
+        m = len(seq)
+        for k in range(m):
+            i0, i1 = seq[k], seq[(k + 1) % m]
+            nf = bm.faces.new([bm.verts[i0], bm.verts[i1], centre])
+            nf.material_index = info["material"]
+            nf.smooth = info["smooth"]
+            for lay in uv_layers:
+                vals = seq_uv[lay.name]
+                u0 = vals[k]
+                u1 = vals[(k + 1) % m]
+                nf.loops[0][lay].uv = u0
+                nf.loops[1][lay].uv = u1
+                nf.loops[2][lay].uv = (u0 + u1) * 0.5
             new_faces.append(nf)
 
-    bmesh.ops.delete(bm, geom=faces, context='FACES')
+    # ---- the old faces go away -------------------------------------------
+    bm.faces.ensure_lookup_table()
+    old = [bm.faces[fi] for fi in sel_ids]
+    bmesh.ops.delete(bm, geom=old, context='FACES')
     bm.to_mesh(me)
     bm.free()
     me.update()
