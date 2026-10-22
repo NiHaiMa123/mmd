@@ -325,26 +325,39 @@ def body_region(bone_name: str) -> str:
 
 def _region_candidates(body_me, bfaces: list[int], region_of: list[str],
                        rest_sign: dict[int, float], stride: int
-                       ) -> tuple[dict[str, int], dict[str, int]]:
+                       ) -> tuple[dict[str, int], dict[str, int], dict[str, int],
+                                  dict[str, int]]:
     """How many skin points every region puts into the test.
 
     "0 points pierced in the foot" only means something next to "12 points
     of the foot were looked at" - a region with no candidates cannot pierce
-    anything.  The points whose rest sign is undefined are counted apart:
-    they cannot be judged at all.
+    anything.  The points are counted apart by what the detector can do
+    with them:
+
+    * `positive`: the rest sign is above the threshold, so a sign flip can
+      be judged at all;
+    * `nonpositive`: the rest sign is there but too small or negative - the
+      detector never counts these, so they are not really candidates;
+    * `missing`: no rest sign at all.
     """
+    totals: dict[str, int] = {}
+    positive: dict[str, int] = {}
+    nonpositive: dict[str, int] = {}
+    missing: dict[str, int] = {}
     verts = set()
     for fi in bfaces:
         if fi < len(body_me.polygons):
             verts.update(body_me.polygons[fi].vertices)
-    per_region: dict[str, int] = {}
-    undefined: dict[str, int] = {}
     for i in sorted(verts)[::stride]:
         key = region_of[i] if i < len(region_of) else "other"
-        per_region[key] = per_region.get(key, 0) + 1
+        totals[key] = totals.get(key, 0) + 1
         if i not in rest_sign:
-            undefined[key] = undefined.get(key, 0) + 1
-    return per_region, undefined
+            missing[key] = missing.get(key, 0) + 1
+        elif rest_sign[i] > 0.001:
+            positive[key] = positive.get(key, 0) + 1
+        else:
+            nonpositive[key] = nonpositive.get(key, 0) + 1
+    return totals, positive, nonpositive, missing
 
 
 def motion_check(objects: list[bpy.types.Object], motions: str | None,
@@ -394,7 +407,8 @@ def motion_check(objects: list[bpy.types.Object], motions: str | None,
         bme, split["skin_faces"])
     # how many points every region puts into the test - the mesh is freed
     # right after, so this has to happen now
-    candidates, undefined = _region_candidates(
+    (candidates, ref_positive, ref_nonpositive,
+     ref_missing) = _region_candidates(
         bme, split["skin_faces"], region_of, rest_sign, sample_stride)
     bev.to_mesh_clear()
     if gev is not bev:
@@ -443,8 +457,15 @@ def motion_check(objects: list[bpy.types.Object], motions: str | None,
                                          key=lambda kv: -kv[1])),
         "candidates_by_region": dict(sorted(candidates.items(),
                                            key=lambda kv: -kv[1])),
-        "undefined_sign_by_region": dict(sorted(undefined.items(),
-                                                key=lambda kv: -kv[1])),
+        # the points the detector can actually judge: a rest sign that is
+        # there but too small or negative never counts as a sign flip, so
+        # it is not a candidate
+        "reference_positive_by_region": dict(sorted(ref_positive.items(),
+                                                   key=lambda kv: -kv[1])),
+        "reference_nonpositive_by_region": dict(sorted(ref_nonpositive.items(),
+                                                       key=lambda kv: -kv[1])),
+        "missing_reference_by_region": dict(sorted(ref_missing.items(),
+                                                   key=lambda kv: -kv[1])),
         "worst_frame_regions": worst.get("regions", {}),
         "motion": motions,
         "frame_range": [start, end],
@@ -501,10 +522,16 @@ def physics_motion_check(objects: list[bpy.types.Object], motions: str,
         motion_mod._bvh_from(bme, split["skin_faces"]),
         motion_mod._bvh_from(gme, split["garment_faces"]),
         bme, split["skin_faces"])
+    dom = dressing.dominant_bones(bmesh_obj)
+    # the same denominators as the plain motion check, so the two reports
+    # can be read next to each other
+    region_of = [body_region(name) for name in dom]
+    (candidates, ref_positive, ref_nonpositive,
+     ref_missing) = _region_candidates(
+        bme, split["skin_faces"], region_of, rest_sign, 3)
     bpy.data.meshes.remove(bme)
     if gme is not bme:
         bpy.data.meshes.remove(gme)
-    dom = dressing.dominant_bones(bmesh_obj)
 
     try:
         bpy.ops.mmd_tools.import_vmd(filepath=motions, scale=0.08,
@@ -556,12 +583,31 @@ def physics_motion_check(objects: list[bpy.types.Object], motions: str,
     scene.view_layers[0].update()
     first_pos: list | None = None
     last_pos: list | None = None
+    # the dynamic near field: the pairs that come close *during* the action,
+    # not only in the rest pose.  The rules do not change while the
+    # simulation runs, so the pair table is built once.
+    pair_table = _ps._pair_table(_rigids)
+    dynamic_near: list[dict[str, Any]] = []
     sample_lo, sample_hi = min(sample), max(sample)
     for f in range(first_frame, last_frame + 1):
         scene.frame_set(f)
         bpy.context.view_layer.update()
         if f not in sample:
             continue
+        # where the bodies are in this frame
+        frame_positions = {o.name: o.matrix_world.translation.copy()
+                           for o in _rigids}
+        near = _ps.contact_matrix_report(_rigids, positions=frame_positions,
+                                         table=pair_table)
+        dynamic_near.append({
+            "frame": f,
+            "near_pairs": near["near_pairs"],
+            "near_false_positive": near["near_false_positive"],
+            "near_false_negative": near["near_false_negative"],
+            "near_gap_pairs": near["near_gap_pairs"],
+            "near_gap_false_positive": near["near_gap_false_positive"],
+            "near_gap_false_negative": near["near_gap_false_negative"],
+        })
         bme, bev = _evaluated_mesh_copy(bmesh_obj)
         if gmesh is bmesh_obj:
             gme, gev = bme, bev
@@ -620,6 +666,22 @@ def physics_motion_check(objects: list[bpy.types.Object], motions: str,
         "frames": [first_frame, last_frame],
         "setup": setup,
         "per_frame": results,
+        "candidates_by_region": dict(sorted(candidates.items(),
+                                           key=lambda kv: -kv[1])),
+        "reference_positive_by_region": dict(sorted(ref_positive.items(),
+                                                   key=lambda kv: -kv[1])),
+        "reference_nonpositive_by_region": dict(sorted(ref_nonpositive.items(),
+                                                       key=lambda kv: -kv[1])),
+        "missing_reference_by_region": dict(sorted(ref_missing.items(),
+                                                   key=lambda kv: -kv[1])),
+        # the near field during the action, per sampled frame
+        "dynamic_near_field": dynamic_near,
+        "dynamic_near_gap_pairs_max": max(
+            (d["near_gap_pairs"] for d in dynamic_near), default=0),
+        "dynamic_near_gap_false_positive_max": max(
+            (d["near_gap_false_positive"] for d in dynamic_near), default=0),
+        "dynamic_near_gap_false_negative_max": max(
+            (d["near_gap_false_negative"] for d in dynamic_near), default=0),
         "pierced_by_region": dict(sorted(totals.items(),
                                          key=lambda kv: -kv[1])),
         "proxy_in_body_total": sum(r["proxy_in_body"] for r in results),

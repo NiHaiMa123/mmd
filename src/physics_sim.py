@@ -102,9 +102,61 @@ def collision_slots(r: bpy.types.Object, slot_of: dict[int, int],
     return slots
 
 
+def _bounding_radius(obj: bpy.types.Object) -> float:
+    """A conservative radius of a rigid body's shape.
+
+    The centre distance of two bodies says nothing about whether they can
+    touch: a long skirt capsule and a thigh collider can be 30 cm apart and
+    still meet.  The gap between the two bounding spheres is the measure
+    that does.
+    """
+    me = getattr(obj, "data", None)
+    if me is None or not hasattr(me, "vertices") or not len(me.vertices):
+        return 0.0
+    mw = obj.matrix_world
+    c = mw.translation
+    r = 0.0
+    for v in me.vertices:
+        d = (mw @ v.co - c).length
+        if d > r:
+            r = d
+    return r
+
+
+def _pair_table(rigids: list[bpy.types.Object]
+                ) -> list[tuple[int, int, bool, bool]]:
+    """(i, j, allowed by PMX, shares a layer) for every pair of bodies.
+
+    The rules do not change while the simulation runs, so the table is
+    built once and the per frame reports only have to measure distances.
+    """
+    data = []
+    for r in rigids:
+        rb = r.rigid_body
+        slots = list(rb.collision_collections) if rb else [False] * 20
+        data.append((r.mmd_rigid.collision_group_number,
+                     list(r.mmd_rigid.collision_group_mask),
+                     set(i for i, on in enumerate(slots) if on)))
+    table: list[tuple[int, int, bool, bool]] = []
+    n = len(rigids)
+    for i in range(n):
+        gi, mi, li = data[i]
+        for j in range(i + 1, n):
+            gj, mj, lj = data[j]
+            # mmd_rigid.collision_group_mask[g] is True when the two groups
+            # may collide - the PMX file stores the opposite, the groups a
+            # body does *not* collide with
+            allowed = (gj < len(mi) and mi[gj]) and (gi < len(mj) and mj[gi])
+            table.append((i, j, allowed, bool(li & lj)))
+    return table
+
+
 def contact_matrix_report(rigids: list[bpy.types.Object],
                          positions: dict[str, Vector] | None = None,
-                         near_dist: float = 0.12) -> dict[str, Any]:
+                         near_dist: float = 0.12,
+                         gap_dist: float = 0.02,
+                         table: list[tuple[int, int, bool, bool]] | None = None
+                         ) -> dict[str, Any]:
     """How far is Blender's collision rule from the MMD one?
 
     MMD lets two bodies collide when neither of them excludes the other's
@@ -118,21 +170,27 @@ def contact_matrix_report(rigids: list[bpy.types.Object],
     differ are counted.  Without this the physics QA would claim a fidelity
     it does not have.
 
-    `positions` limits the report to the bodies that are actually near each
-    other: a wrong pair between a hair strand and the other leg never
-    touches, while a wrong pair at the hip decides everything.
+    What is counted here are **potential pairs**, not contacts: nothing in
+    this report says that bullet ever generated a contact manifold for a
+    pair.  The "near" figures narrow the set down to the pairs that are
+    close enough to ever touch, in two ways:
+
+    * `near_*` compares the centre distance (12 cm by default);
+    * `near_gap_*` compares the gap between the two bounding spheres, which
+      is the conservative one - a long capsule and a thigh collider meet
+      long before their centres do.
+
+    `positions` has to be the positions of the bodies in the pose the report
+    is about; a pose that was read after the simulation moved them describes
+    the last frame, not the rest pose.
     """
     n = len(rigids)
     if n < 2:
         return {"pairs": 0}
-    data = []
-    for r in rigids:
-        rb = r.rigid_body
-        slots = list(rb.collision_collections) if rb else [False] * 20
-        data.append((r.mmd_rigid.collision_group_number,
-                     list(r.mmd_rigid.collision_group_mask),
-                     set(i for i, on in enumerate(slots) if on)))
-    by_name = {r.name: r for r in rigids}
+    groups = [r.mmd_rigid.collision_group_number for r in rigids]
+    radii = [_bounding_radius(r) for r in rigids]
+    if table is None:
+        table = _pair_table(rigids)
     false_positive = 0
     false_negative = 0
     expected_pairs = 0
@@ -140,43 +198,51 @@ def contact_matrix_report(rigids: list[bpy.types.Object],
     near_fp = 0
     near_fn = 0
     near_pairs = 0
+    gap_fp = 0
+    gap_fn = 0
+    gap_pairs = 0
     by_group: dict[tuple[int, int], list[int]] = {}
     near_by_group: dict[tuple[int, int], list[int]] = {}
-    for i in range(n):
-        gi, mi, li = data[i]
-        for j in range(i + 1, n):
-            gj, mj, lj = data[j]
-            # mmd_rigid.collision_group_mask[g] is True when the two groups
-            # may collide - the PMX file stores the opposite, the groups a
-            # body does *not* collide with
-            allowed = (gj < len(mi) and mi[gj]) and (gi < len(mj) and mj[gi])
-            shared = bool(li & lj)
-            near = True
-            if positions is not None:
-                a = positions.get(rigids[i].name)
-                b = positions.get(rigids[j].name)
-                near = (a is not None and b is not None
-                        and (a - b).length <= near_dist)
-            if allowed:
-                expected_pairs += 1
-            if shared:
-                shared_pairs += 1
-            if allowed and not shared:
-                false_negative += 1
-                key = (min(gi, gj), max(gi, gj))
-                by_group.setdefault(key, []).append(1)
-                near_by_group.setdefault(key, []).append(1)
-                if near:
-                    near_fn += 1
-            elif shared and not allowed:
-                false_positive += 1
-                key = (min(gi, gj), max(gi, gj))
-                by_group.setdefault(key, []).append(0)
-                near_by_group.setdefault(key, []).append(0)
-                if near:
-                    near_fp += 1
+    for i, j, allowed, shared in table:
+        gi, gj = groups[i], groups[j]
+        near = True
+        gap = True
+        if positions is not None:
+            a = positions.get(rigids[i].name)
+            b = positions.get(rigids[j].name)
+            if a is None or b is None:
+                near = False
+                gap = False
+            else:
+                dist = (a - b).length
+                near = dist <= near_dist
+                gap = (dist - radii[i] - radii[j]) <= gap_dist
+        if allowed:
+            expected_pairs += 1
+        if shared:
+            shared_pairs += 1
+        if allowed and not shared:
+            false_negative += 1
+            key = (min(gi, gj), max(gi, gj))
+            by_group.setdefault(key, []).append(1)
             if near:
-                near_pairs += 1
+                near_by_group.setdefault(key, []).append(1)
+                near_fn += 1
+            if gap:
+                gap_fn += 1
+        elif shared and not allowed:
+            false_positive += 1
+            key = (min(gi, gj), max(gi, gj))
+            by_group.setdefault(key, []).append(0)
+            if near:
+                near_by_group.setdefault(key, []).append(0)
+                near_fp += 1
+            if gap:
+                gap_fp += 1
+        if near:
+            near_pairs += 1
+        if gap:
+            gap_pairs += 1
     worst = sorted(by_group.items(), key=lambda kv: len(kv[1]),
                    reverse=True)[:10]
     # the pairs Blender actually lets through are the ones that share a
@@ -194,9 +260,14 @@ def contact_matrix_report(rigids: list[bpy.types.Object],
         "effective_blender_layer_pairs": shared_pairs,
         "false_positive_layer_pairs": false_positive,
         "false_negative_layer_pairs": false_negative,
+        "near_center_distance": near_dist,
         "near_pairs": near_pairs,
         "near_false_positive": near_fp,
         "near_false_negative": near_fn,
+        "near_gap_distance": gap_dist,
+        "near_gap_pairs": gap_pairs,
+        "near_gap_false_positive": gap_fp,
+        "near_gap_false_negative": gap_fn,
         "worst_group_pairs": [
             {"groups": list(k), "differing": len(v),
              "near_differing": len(near_by_group.get(k, []))}

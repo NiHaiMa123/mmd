@@ -454,7 +454,9 @@ def transfer_target_weights(garment: bpy.types.Object,
                             blend: float = 0.8, max_dist: float = 0.06,
                             domains: bool = True,
                             always_regions: list[bool] | None = None,
-                            keep_groups: set[str] | None = None
+                            keep_groups: set[str] | None = None,
+                            keep_bones: set[str] | None = None,
+                            target_bones: set[str] | None = None
                             ) -> dict[str, Any]:
     """Give the tight parts of the garment the target body's weight gradient.
 
@@ -474,7 +476,18 @@ def transfer_target_weights(garment: bpy.types.Object,
 
     `keep_groups` are the groups that are not bones at all - mmd_tools adds
     `mmd_edge_scale` and `mmd_vertex_order` to every imported mesh and they
-    have to survive the rebuild untouched.
+    have to survive the rebuild untouched.  They are also not part of the
+    weight sum: a vertex has one set of bone weights and those pseudo groups
+    sit next to it.
+
+    `keep_bones` are real bones that carry a meaning of their own (a skirt
+    chain): they keep their weight instead of being replaced.
+
+    `target_bones` says which of the interpolated target weights may be
+    used.  It has to be the bones that really drive the target's skin, not
+    just the ones the source shares with the target: the target may have
+    helper bones of its own, and dropping their weight would leave the
+    garment bound to the wrong bones.
     """
     me = garment.data
     tme = target_body.data
@@ -509,6 +522,8 @@ def transfer_target_weights(garment: bpy.types.Object,
     gdom = [digit_domain(n) for n in dominant_bones(garment)]
 
     updated = 0
+    no_nearest = 0
+    no_real_bone = 0
     for vi, v in enumerate(me.vertices):
         t = tightness[vi] * blend
         if always_regions is not None and always_regions[vi]:
@@ -521,9 +536,11 @@ def transfer_target_weights(garment: bpy.types.Object,
         # the trees are built in world space, so the query has to be too
         loc, _nrm, k, dist = tree.find_nearest(gmw @ v.co)
         if loc is None or dist > max_dist:
+            no_nearest += 1
             continue
         poly = tme.polygons[faces[k]]
         if len(poly.vertices) != 3:
+            no_nearest += 1
             continue
         a, b, c = [tmw @ tme.vertices[i].co for i in poly.vertices]
         w0, w1, w2 = _barycentric(loc, a, b, c)
@@ -534,11 +551,15 @@ def transfer_target_weights(garment: bpy.types.Object,
             for name, weight in _vertex_weights(target_body, i).items():
                 blended[name] = blended.get(name, 0.0) + bw * weight
         if not blended:
+            no_real_bone += 1
             continue
         new: dict[str, float] = {}
         for name, weight in current[vi].items():
             if name in body_bones:
                 new[name] = t * blended.get(name, 0.0) + (1.0 - t) * weight
+            elif keep_bones and name in keep_bones:
+                # a bone with a meaning of its own: it keeps its weight
+                new[name] = weight
             elif keep_groups and name in keep_groups:
                 # not a bone - it has to stay exactly as it was
                 new[name] = weight
@@ -548,7 +569,8 @@ def transfer_target_weights(garment: bpy.types.Object,
             # a body bone the garment did not carry yet: it comes from the
             # target only.  A bone that was already there was mixed in above,
             # adding it again would turn t into 2t.
-            if name in body_bones and name not in current[vi]:
+            allowed = body_bones if target_bones is None else target_bones
+            if name in allowed and name not in current[vi]:
                 new[name] = new.get(name, 0.0) + t * weight
         # keep the sum at one
         total = sum(w for n, w in new.items()
@@ -577,6 +599,9 @@ def transfer_target_weights(garment: bpy.types.Object,
             vg.add(indices, weight, 'REPLACE')
 
     return {"vertices_reweighted": updated,
+            "vertices_selected": sum(1 for t in tightness if t > 0.0),
+            "vertices_no_nearest_face": no_nearest,
+            "vertices_no_real_bone": no_real_bone,
             "groups": len(buckets),
             "domains": len(trees)}
 
@@ -1307,6 +1332,7 @@ def subdivide_triangles(me: bpy.types.Mesh, face_ids: list[int],
             if keys[k] in mid_index:
                 seq.append(mid_index[keys[k]])
         seq_uv: dict[str, list[Vector]] = {}
+        centre_uv: dict[str, Vector] = {}
         for lay in uv_layers:
             u = uvs[lay.name]
             vals: list[Vector] = []
@@ -1315,6 +1341,13 @@ def subdivide_triangles(me: bpy.types.Mesh, face_ids: list[int],
                 if keys[k] in mid_index:
                     vals.append((u[k] + u[(k + 1) % n]) * 0.5)
             seq_uv[lay.name] = vals
+            # The centre is one vertex, so it gets one UV.  Giving every
+            # triangle of the fan its own value for the centre tears the
+            # texture inside the triangle the fan came from.
+            acc = None
+            for val in vals:
+                acc = val.copy() if acc is None else acc + val
+            centre_uv[lay.name] = acc / len(vals)
         m = len(seq)
         for k in range(m):
             i0, i1 = seq[k], seq[(k + 1) % m]
@@ -1327,7 +1360,7 @@ def subdivide_triangles(me: bpy.types.Mesh, face_ids: list[int],
                 u1 = vals[(k + 1) % m]
                 nf.loops[0][lay].uv = u0
                 nf.loops[1][lay].uv = u1
-                nf.loops[2][lay].uv = (u0 + u1) * 0.5
+                nf.loops[2][lay].uv = centre_uv[lay.name]
             new_faces.append(nf)
 
     # ---- the old faces go away -------------------------------------------
@@ -1347,6 +1380,7 @@ def project_layer_on_limb(garment: bpy.types.Object, tgt_body: bpy.types.Object,
                            margin: float = 0.004, subdivide_levels: int = 2,
                            max_dist: float = 0.12, fade_rings: int = 2,
                            knee_band: float = 0.05,
+                           hem_to_boot: tuple[str, ...] = (),
                            body_bones: set[str] | None = None,
                            target_weights: bool = False
                            ) -> dict[str, Any]:
@@ -1520,17 +1554,74 @@ def project_layer_on_limb(garment: bpy.types.Object, tgt_body: bpy.types.Object,
     for i in layer_verts:
         depth.setdefault(i, fade_rings + 1)
 
+    # The layer's hem and the boot's collar are the same edge in the source
+    # model - the shoe is a separate shell that starts where the leg skin
+    # ends.  After the retarget they no longer meet: the layer is projected
+    # onto the base body's leg while the boot is fitted to its foot, so the
+    # hem ends up outside the collar in a few places and pokes through it.
+    # The hem therefore follows the boot's collar instead of the leg.
+    hem = border - top_border
+    collar: list[tuple[Vector, Vector]] = []
+    if hem_to_boot and hem:
+        z_hem = [gme.vertices[i].co.z for i in hem]
+        lo = min(z_hem) - 0.02
+        hi = max(z_hem) + 0.02
+        boot_edges: dict[tuple[int, int], int] = {}
+        for p in gme.polygons:
+            mi = p.material_index
+            name = (gme.materials[mi].name
+                    if mi < len(gme.materials) and gme.materials[mi] else "")
+            if name not in hem_to_boot:
+                continue
+            vs = list(p.vertices)
+            for k in range(len(vs)):
+                a, b = vs[k], vs[(k + 1) % len(vs)]
+                key = (min(a, b), max(a, b))
+                boot_edges[key] = boot_edges.get(key, 0) + 1
+        for key, n in boot_edges.items():
+            if n != 1:
+                continue
+            a = gme.vertices[key[0]].co
+            b = gme.vertices[key[1]].co
+            if not (lo <= a.z <= hi and lo <= b.z <= hi):
+                continue
+            collar.append((a.copy(), b.copy()))
+
+    def collar_point(co: Vector):
+        """The closest point on the boot's collar."""
+        best = None
+        best_d = 1e9
+        for a, b in collar:
+            ab = b - a
+            ll = ab.length_squared
+            t = 0.0 if ll < 1e-12 else max(0.0, min(1.0, (co - a).dot(ab) / ll))
+            p = a + ab * t
+            d = (p - co).length
+            if d < best_d:
+                best_d = d
+                best = p
+        return best, best_d
+
     positions = [v.co.copy() for v in gme.vertices]
     moved = 0
     missed = 0
     max_disp = 0.0
     knee_disp = 0.0
+    hem_snapped = 0
+    hem_max_move = 0.0
     for i in layer_verts:
         v = gme.vertices[i]
         rings = depth.get(i, fade_rings + 1)
         w = min(1.0, rings / max(1, fade_rings))
         if w <= 0.0:
             continue
+        if collar and i in hem:
+            point, dist = collar_point(v.co)
+            if point is not None:
+                positions[i] = point
+                hem_snapped += 1
+                hem_max_move = max(hem_max_move, dist)
+                continue
         kw = knee_weight(v.co.z)
         acc = Vector((0.0, 0.0, 0.0))
         weight_sum = 0.0
@@ -1570,38 +1661,49 @@ def project_layer_on_limb(garment: bpy.types.Object, tgt_body: bpy.types.Object,
              "max_displacement": round(max_disp, 5),
              "knee_max_displacement": round(knee_disp, 5),
              "hem_z": [round(z_lo, 4), round(z_hi, 4)],
+             "hem_vertices": len(hem),
+             "hem_snapped_to_collar": hem_snapped,
+             "hem_max_move": round(hem_max_move, 5),
+             "collar_segments": len(collar),
              "border_vertices": len(border)}
 
     # The layer keeps the *source*'s weights, so it follows the source's
     # leg and not the base body's.  A paint layer has no bones of its own,
-    # so it can take the base body's skin weights outright - unless it
-    # carries a garment bone, which has to survive.
+    # so it can take the base body's skin weights outright.
+    #
+    # The bones of the layer fall into three kinds, and they are treated
+    # differently: the ones the base body's skin really uses are replaced,
+    # the ones that carry a meaning of their own (a garment chain) keep
+    # their weight, and the groups that are not bones at all (mmd_tools
+    # adds mmd_edge_scale and mmd_vertex_order to every imported mesh) stay
+    # untouched.  One vertex of a kind is no reason to skip the whole
+    # layer.
     if target_weights and body_bones:
         gnames = [vg.name for vg in garment.vertex_groups]
         arm_bones = {b.name for b in tgt_arm.data.bones}
-        garment_bones: set[str] = set()
+        skin_bones = {vg.name for vg in tgt_body.vertex_groups
+                      if vg.name in arm_bones}
+        keep_bones: set[str] = set()
         pseudo: set[str] = set()
         for i in layer_verts:
             for g in gme.vertices[i].groups:
                 name = gnames[g.group]
-                if name in body_bones:
+                if name in skin_bones:
                     continue
                 if name in arm_bones:
-                    garment_bones.add(name)
+                    keep_bones.add(name)
                 else:
-                    # mmd_tools adds groups that are not bones at all
                     pseudo.add(name)
-        if garment_bones:
-            stats["target_weights"] = "skipped"
-            stats["garment_bones"] = sorted(garment_bones)
-        else:
-            tightness = [0.0] * len(gme.vertices)
-            for i in layer_verts:
-                tightness[i] = 1.0
-            stats["target_weights"] = transfer_target_weights(
-                garment, tgt_body, body_bones, tightness, blend=1.0,
-                max_dist=0.05, domains=False, keep_groups=pseudo or None)
-            stats["kept_groups"] = sorted(pseudo)
+        tightness = [0.0] * len(gme.vertices)
+        for i in layer_verts:
+            tightness[i] = 1.0
+        stats["target_weights"] = transfer_target_weights(
+            garment, tgt_body, body_bones, tightness, blend=1.0,
+            max_dist=0.05, domains=False, keep_groups=pseudo or None,
+            keep_bones=keep_bones or None,
+            target_bones=skin_bones or None)
+        stats["kept_groups"] = sorted(pseudo)
+        stats["kept_bones"] = sorted(keep_bones)
     return stats
 
 
@@ -2586,7 +2688,11 @@ DEFAULT_CONFIG = {
              "axis": ("足", "ひざ"),
              # the layer takes the base body's skin weights, so it follows
              # the base body's leg and not the source's
-             "target_weights": True},
+             "target_weights": True,
+             # the hem follows the boot's collar: in the source model the
+             # hem and the collar are the same edge, and after the retarget
+             # they drift apart - the hem then pokes through the collar
+             "hem_to_boot": ("服", "服+jinshu")},
         ],
         "shoe_margin": 0.004,
         "shoe_blend_rings": 3,
@@ -2885,6 +2991,7 @@ def run(src_objs: list[bpy.types.Object], tgt_objs: list[bpy.types.Object],
                     margin=spec.get("margin", 0.004),
                     subdivide_levels=int(spec.get("subdivide", 2)),
                     knee_band=float(spec.get("knee_band", 0.05)),
+                    hem_to_boot=tuple(spec.get("hem_to_boot", ())),
                     body_bones=body_bones,
                     target_weights=bool(spec.get("target_weights", True))))
 
