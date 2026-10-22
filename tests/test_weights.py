@@ -112,6 +112,9 @@ def main():
     check("the weights still add up to one", abs(total - 1.0) < 1e-4, f"{total}")
 
     print("RESULT:", "OK" if ok else "PROBLEM")
+    # a test that fails has to say so in the exit code, otherwise a pipeline
+    # reads "0" as "passed"
+    sys.exit(0 if ok else 1)
 
 
 main()
