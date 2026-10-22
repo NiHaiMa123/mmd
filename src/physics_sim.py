@@ -140,6 +140,7 @@ def contact_matrix_report(rigids: list[bpy.types.Object],
     near_fn = 0
     near_pairs = 0
     by_group: dict[tuple[int, int], list[int]] = {}
+    near_by_group: dict[tuple[int, int], list[int]] = {}
     for i in range(n):
         gi, mi, li = data[i]
         for j in range(i + 1, n):
@@ -159,12 +160,16 @@ def contact_matrix_report(rigids: list[bpy.types.Object],
                 expected_pairs += 1
             if allowed and not shared:
                 false_negative += 1
-                by_group.setdefault((min(gi, gj), max(gi, gj)), []).append(1)
+                key = (min(gi, gj), max(gi, gj))
+                by_group.setdefault(key, []).append(1)
+                near_by_group.setdefault(key, []).append(1)
                 if near:
                     near_fn += 1
             elif shared and not allowed:
                 false_positive += 1
-                by_group.setdefault((min(gi, gj), max(gi, gj)), []).append(0)
+                key = (min(gi, gj), max(gi, gj))
+                by_group.setdefault(key, []).append(0)
+                near_by_group.setdefault(key, []).append(0)
                 if near:
                     near_fp += 1
             if near:
@@ -182,7 +187,9 @@ def contact_matrix_report(rigids: list[bpy.types.Object],
         "near_false_positive": near_fp,
         "near_false_negative": near_fn,
         "worst_group_pairs": [
-            {"groups": list(k), "differing": len(v)} for k, v in worst],
+            {"groups": list(k), "differing": len(v),
+             "near_differing": len(near_by_group.get(k, []))}
+            for k, v in worst],
     }
 
 
@@ -249,6 +256,10 @@ def setup(scene: bpy.types.Scene, arm: bpy.types.Object,
     children = list(root.children)
     slot_of = {g: children.index(c) for g, c in coll_of.items()}
     group_masks = _group_masks(rigids)
+
+    mode_counts = {"0": 0, "1": 0, "2": 0}
+    for r in rigids:
+        mode_counts[_mode(r)] = mode_counts.get(_mode(r), 0) + 1
 
     for r in rigids:
         g = _bone_group(r)
@@ -333,20 +344,30 @@ def setup(scene: bpy.types.Scene, arm: bpy.types.Object,
     # colliders away from the body.
     # The keys are written while the simulation is already running, so the
     # first pass writes the bodies one frame behind and the second pass
-    # writes them where the simulation actually wants them.
+    # writes them where the simulation actually wants them.  The error is
+    # therefore measured per frame and not only at the end - a single
+    # number cannot tell a constant offset from a drift.
+    errors: list[float] = []
     max_rel_error = 0.0
+    worst_frame = first_frame
     for pass_index in range(2):
         for r, _b, _o in follow:
             r.animation_data_clear()
             r.rotation_mode = 'QUATERNION'
         if pass_index:
-            # the point cache holds the result of the last pass; without
+            # The point cache holds the result of the last pass; without
             # dropping it the simulation would not run again and the second
-            # pass would just copy the first one
+            # pass would just copy the first one.  Moving the start frame
+            # and back invalidates the cache, and the world is marked dirty
+            # so bullet starts over from the first frame.
             cache = scene.rigidbody_world.point_cache
             cache.frame_start = first_frame - 1
             cache.frame_start = first_frame
+            scene.rigidbody_world.enabled = False
+            scene.rigidbody_world.enabled = True
         max_rel_error = 0.0
+        if pass_index:
+            errors = []
         for f in range(first_frame, last_frame + 1):
             scene.frame_set(f)
             bpy.context.view_layer.update()
@@ -358,7 +379,10 @@ def setup(scene: bpy.types.Scene, arm: bpy.types.Object,
                     # collider ended up
                     got = m.inverted() @ r.matrix_world
                     err = (got.translation - offset.translation).length
-                    max_rel_error = max(max_rel_error, err)
+                    errors.append(err)
+                    if err > max_rel_error:
+                        max_rel_error = err
+                        worst_frame = f
                 r.matrix_world = m @ offset
                 r.keyframe_insert("location", frame=f)
                 r.keyframe_insert("rotation_quaternion", frame=f)
@@ -372,11 +396,25 @@ def setup(scene: bpy.types.Scene, arm: bpy.types.Object,
         if list(r.mmd_rigid.collision_group_mask) != group_masks.get(g):
             mixed += 1
 
+    errors_sorted = sorted(errors)
+    p95 = errors_sorted[int(len(errors_sorted) * 0.95)] if errors_sorted else 0.0
+    mean = sum(errors) / len(errors) if errors else 0.0
+
     return {"rigid_bodies": len(rigids), "groups": groups,
             "slots": slot_of, "follow_bodies": len(follow),
             "driven_bones": len(drive),
+            # mode 2 is a physics body whose rotation follows the bone;
+            # blender cannot express that (a kinematic body is animated as
+            # a whole), so those bodies are simulated as mode 1 and the
+            # proxy is only as good as their number allows
+            "mode_counts": mode_counts,
+            "mode2_bodies": mode_counts.get("2", 0),
             "mixed_group_masks": mixed,
             "max_follow_error": round(max_rel_error, 6),
+            "worst_follow_frame": worst_frame,
+            "mean_follow_error": round(mean, 6),
+            "p95_follow_error": round(p95, 6),
+            "follow_error_samples": len(errors),
             "broken_mask_bits": broken_bits,
             "contact_matrix": contact_matrix_report(rigids),
             "frames": [first_frame, last_frame]}

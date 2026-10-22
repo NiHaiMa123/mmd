@@ -323,6 +323,30 @@ def body_region(bone_name: str) -> str:
     return "other"
 
 
+def _region_candidates(body_me, bfaces: list[int], region_of: list[str],
+                       rest_sign: dict[int, float], stride: int
+                       ) -> tuple[dict[str, int], dict[str, int]]:
+    """How many skin points every region puts into the test.
+
+    "0 points pierced in the foot" only means something next to "12 points
+    of the foot were looked at" - a region with no candidates cannot pierce
+    anything.  The points whose rest sign is undefined are counted apart:
+    they cannot be judged at all.
+    """
+    verts = set()
+    for fi in bfaces:
+        if fi < len(body_me.polygons):
+            verts.update(body_me.polygons[fi].vertices)
+    per_region: dict[str, int] = {}
+    undefined: dict[str, int] = {}
+    for i in sorted(verts)[::stride]:
+        key = region_of[i] if i < len(region_of) else "other"
+        per_region[key] = per_region.get(key, 0) + 1
+        if i not in rest_sign:
+            undefined[key] = undefined.get(key, 0) + 1
+    return per_region, undefined
+
+
 def motion_check(objects: list[bpy.types.Object], motions: str | None,
                  garment_materials: list[str] | None = None,
                  frame_step: int = 15, sample_stride: int = 3,
@@ -368,6 +392,10 @@ def motion_check(objects: list[bpy.types.Object], motions: str | None,
         motion_mod._bvh_from(bme, split["skin_faces"]),
         motion_mod._bvh_from(gme, split["garment_faces"]),
         bme, split["skin_faces"])
+    # how many points every region puts into the test - the mesh is freed
+    # right after, so this has to happen now
+    candidates, undefined = _region_candidates(
+        bme, split["skin_faces"], region_of, rest_sign, sample_stride)
     bev.to_mesh_clear()
     if gev is not bev:
         gev.to_mesh_clear()
@@ -413,6 +441,10 @@ def motion_check(objects: list[bpy.types.Object], motions: str | None,
     return {
         "pierced_by_region": dict(sorted(totals.items(),
                                          key=lambda kv: -kv[1])),
+        "candidates_by_region": dict(sorted(candidates.items(),
+                                           key=lambda kv: -kv[1])),
+        "undefined_sign_by_region": dict(sorted(undefined.items(),
+                                                key=lambda kv: -kv[1])),
         "worst_frame_regions": worst.get("regions", {}),
         "motion": motions,
         "frame_range": [start, end],

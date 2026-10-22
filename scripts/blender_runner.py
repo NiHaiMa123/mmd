@@ -253,9 +253,13 @@ def main() -> int:
                                outfit_groups=_outfit_groups(args.out))
             result.update(report)
             # a QA that reported FAILED did not pass - the exit code has to
-            # say so, otherwise "0" would be read as "the check passed"
+            # say so, otherwise "0" would be read as "the check passed".
+            # UNKNOWN means the check did not run: that is just as much not
+            # a pass as a failure, and a pipeline that asked for the motion
+            # check has to hear about it.
             result["qa_status"] = report.get("status")
-            result["ok"] = report.get("status") != "FAILED"
+            status = report.get("status")
+            result["ok"] = status not in ("FAILED", "UNKNOWN")
 
         else:
             result["error"] = f"unknown mode {args.mode}"
