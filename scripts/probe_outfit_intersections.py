@@ -1,0 +1,12 @@
+"""Localize actual garment intersections and verify source/evaluated topology."""
+import argparse,json,sys
+from collections import Counter
+from pathlib import Path
+import bpy,numpy as np
+ROOT=Path(__file__).resolve().parents[1];sys.path.insert(0,str(ROOT/'addon'))
+from mmd_outfit.service import engine
+p=argparse.ArgumentParser();p.add_argument('--blend',required=True);p.add_argument('--audit',required=True);a=p.parse_args(sys.argv[sys.argv.index('--')+1:]);folder=Path(a.audit).resolve();r=json.loads((folder/'audit.json').read_text(encoding='utf-8'));engine('import_export').ensure_mmd_tools();bpy.ops.wm.open_mainfile(filepath=str(Path(a.blend).resolve()),load_ui=False,use_scripts=False);body=bpy.data.objects['达妮娅_mesh'];bpy.context.scene.frame_set(325);body.data.calc_loop_triangles();rest=np.array([t.vertices[:] for t in body.data.loop_triangles]);ev=body.evaluated_get(bpy.context.evaluated_depsgraph_get());mesh=ev.to_mesh();mesh.calc_loop_triangles();actual=np.array([t.vertices[:] for t in mesh.loop_triangles]);report={'body_source_face_sizes':dict(Counter(len(f.vertices) for f in body.data.polygons)),'body_source_and_evaluated_triangles_identical':bool(rest.shape==actual.shape and np.array_equal(rest,actual)),'body_vertices_source_evaluated':[len(body.data.vertices),len(mesh.vertices)]};ev.to_mesh_clear()
+with np.load(folder/'surfaces_325.npz') as z:d={k:z[k] for k in z.files}
+for name in ('Cloth','Stockings','SleeveLining'):
+    row=r['frames']['325'][name];pairs=row['pairs'];faces=d[name+'_faces'];co=d[name];triangles=co[faces[np.array(row['bad_triangle_ids'])]];centres=triangles.mean(axis=1);report[name]={'bad_cloth_face_count':len(triangles),'bad_centroid_z_quantiles':np.quantile(centres[:,2],[0,.1,.5,.9,1]).tolist() if len(triangles) else [],'foot_faces':int(np.sum(centres[:,2]<.20)),'lower_leg_faces':int(np.sum((centres[:,2]>=.20)&(centres[:,2]<.78))),'hip_faces':int(np.sum((centres[:,2]>=.78)&(centres[:,2]<1.05))),'upper_body_faces':int(np.sum(centres[:,2]>=1.05)),'examples':[{'cloth_triangle':co[faces[i]].tolist(),'body_triangle':d['skin'][d['skin_faces'][j]].tolist()} for i,j in pairs[::max(1,len(pairs)//5)][:5]]}
+(folder/'localized.json').write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8');print(json.dumps({k:{q:v for q,v in value.items() if q!='examples'} if isinstance(value,dict) else value for k,value in report.items()},ensure_ascii=False),flush=True)

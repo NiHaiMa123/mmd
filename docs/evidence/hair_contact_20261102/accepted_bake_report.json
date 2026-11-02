@@ -1,0 +1,21 @@
+{
+  "status": "BAKED_ORIGINAL_DANCE_REQUIRES_VISUAL_REVIEW",
+  "blend": "E:\\project\\mmd\\work\\headswap_xl_codex\\jiggle_root_point_dance_075_15_20261102\\完整角色_原舞蹈_根部点锚定_15秒.blend",
+  "action": "Jiggle原版_原舞蹈_根部点锚定_450帧",
+  "frames": [
+    1,
+    450
+  ],
+  "fps": 30,
+  "active_bones": 126,
+  "full_head_chains": 27,
+  "body_bone_max_error": 0.0,
+  "body_skin_max_error_m": 0.0,
+  "root_point_anchor_error_m": 7.633119025740598e-07,
+  "strain_flags": [],
+  "no_collision_confirmed_in_every_observed_step": true,
+  "plugin_source_sha256": "1bd2c0ad34e4f4b83b8c04abd6294ad9e7ca9ad66cbc068fab7e71785e3b61aa",
+  "source_animation_preserved": true,
+  "new_per_frame_corrective_motion": false,
+  "elapsed_s": 31.278900299999805
+}

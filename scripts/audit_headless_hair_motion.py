@@ -1,0 +1,11 @@
+"""Quantify head-relative movement and newly retained physical secondary motion."""
+import argparse,json
+from pathlib import Path
+import numpy as np
+p=argparse.ArgumentParser();p.add_argument('--delivery',required=True);a=p.parse_args();out=Path(a.delivery);pub=json.loads((out/'cache_publication.json').read_text('utf8'));src=Path(pub['input']);run=Path(pub['run']);manifest=json.loads((src/'export_complete.json').read_text('utf8'));x=np.load(run/'positions.npy',mmap_mode='r');ref=np.load(src.parent/'dynamics_contact_islands/positions.npy',mmap_mode='r');heads=np.load(src/'anchors.npy',mmap_mode='r')[:,-1];hard=np.load(src/'hard_roots.npy');free=~hard;previous=None;rows=[];sum_squared=np.zeros(len(hard));delta_max=np.zeros(len(hard));dt=manifest['sample_step']/manifest['fps']
+for k in range(len(x)):
+ h=np.linalg.inv(heads[k]);local=x[k]@h[:3,:3].T+h[:3,3];delta=x[k]-ref[k];norm=np.linalg.norm(delta,axis=1);sum_squared+=norm**2;delta_max=np.maximum(delta_max,norm)
+ if previous is not None:
+  speed=np.linalg.norm(local-previous,axis=1)/dt;j=int(np.argmax(speed));rows.append(dict(frame=1+k/8,max_head_relative_speed_m_s=float(speed[j]),maximum_speed_vertex=j,p95_head_relative_speed_m_s=float(np.percentile(speed[free],95)),p95_added_physical_displacement_m=float(np.percentile(norm[free],95)),max_added_physical_displacement_m=float(norm[free].max())))
+ previous=local
+rms=np.sqrt(sum_squared/len(x));report=dict(status='HEAD_RELATIVE_MOTION_MEASURED_REQUIRES_VISUAL_REVIEW',samples=len(x),sample_step=manifest['sample_step'],free_vertices=int(free.sum()),vertices_with_rms_added_motion_above_1mm=int((rms[free]>.001).sum()),vertices_with_rms_added_motion_above_5mm=int((rms[free]>.005).sum()),p95_free_vertex_rms_added_motion_m=float(np.percentile(rms[free],95)),maximum_added_displacement_m=float(delta_max[free].max()),maximum_head_relative_speed_m_s=max(r['max_head_relative_speed_m_s'] for r in rows),worst_speed_samples=sorted(rows,key=lambda r:r['max_head_relative_speed_m_s'],reverse=True)[:20],frame_rows=[r for i,r in enumerate(rows) if (i+1)%8==0]);(out/'motion_report.json').write_text(json.dumps(report,indent=2),'utf8');print(json.dumps({k:v for k,v in report.items() if k not in ['worst_speed_samples','frame_rows']},indent=2),flush=True)

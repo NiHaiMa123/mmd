@@ -29,7 +29,15 @@ def _copy_shape_keys(src_me, new_obj, used: list[int]) -> list[str]:
     """Copy every shape key (except Basis) onto the new vertex numbering."""
     if not src_me.shape_keys:
         return []
+    # The first shape_key_add creates the Basis. Without this explicit copy,
+    # the first non-Basis morph becomes the rest shape of the extracted cloth.
+    basis = new_obj.shape_key_add(name=src_me.shape_keys.key_blocks[0].name,
+                                  from_mix=False)
+    source_basis = src_me.shape_keys.key_blocks[0]
+    basis.data.foreach_set("co", [coordinate
+        for old in used for coordinate in source_basis.data[old].co])
     names = []
+    copied = {source_basis.name: basis}
     for key in src_me.shape_keys.key_blocks:
         if key.name == src_me.shape_keys.key_blocks[0].name:
             continue
@@ -41,7 +49,17 @@ def _copy_shape_keys(src_me, new_obj, used: list[int]) -> list[str]:
             sub.extend(src_co[old * 3:old * 3 + 3])
         if len(sub) == len(nk.data) * 3:
             nk.data.foreach_set("co", sub)
+        nk.slider_min = key.slider_min
+        nk.slider_max = key.slider_max
+        nk.value = key.value
+        nk.mute = key.mute
+        nk.interpolation = key.interpolation
+        nk.vertex_group = key.vertex_group
+        copied[key.name] = nk
         names.append(key.name)
+    for key in src_me.shape_keys.key_blocks:
+        if key.name in copied and key.relative_key.name in copied:
+            copied[key.name].relative_key = copied[key.relative_key.name]
     return names
 
 
@@ -72,6 +90,63 @@ def _copy_vertex_groups(src_obj, new_obj, used: list[int]) -> list[str]:
     return out
 
 
+def split_uv_vertices(obj, tolerance=.001):
+    """Materialize new UV seams using the PMX exporter's UV tolerance.
+
+    Duplicate coordinates, weights and every morph together. Preserve corner
+    normals so a UV seam never becomes a shading or geometry crack.
+    """
+    me = obj.data
+    uv = me.uv_layers.active
+    if uv is None:
+        return {'added_vertices': 0}
+    aliases = {}
+    used, loop_vertices = [], []
+    for loop in me.loops:
+        coordinate = uv.data[loop.index].uv
+        options = aliases.setdefault(loop.vertex_index, [])
+        found = next((i for old_uv, i in options if (coordinate-old_uv).length < tolerance), None)
+        if found is None:
+            found = len(used)
+            used.append(loop.vertex_index)
+            options.append((coordinate.copy(), found))
+        loop_vertices.append(found)
+    # Include any deliberately isolated vertices too.
+    for i in range(len(me.vertices)):
+        if i not in aliases:
+            used.append(i)
+    added = len(used)-len(me.vertices)
+    if not added:
+        return {'added_vertices': 0}
+    normals = [tuple(n.vector) for n in me.corner_normals]
+    new = bpy.data.meshes.new(me.name+'_UVSeams')
+    new.from_pydata([me.vertices[i].co for i in used], [],
+                    [[loop_vertices[i] for i in face.loop_indices] for face in me.polygons])
+    for material in me.materials:
+        new.materials.append(material)
+    for before, after in zip(me.polygons,new.polygons):
+        after.material_index=before.material_index
+        after.use_smooth=before.use_smooth
+    for layer in me.uv_layers:
+        copied=new.uv_layers.new(name=layer.name)
+        for before, after in zip(layer.data,copied.data):
+            after.uv=before.uv
+    new.uv_layers.active_index=me.uv_layers.active_index
+    replacement=bpy.data.objects.new('ExplicitUVSeams',new)
+    bpy.context.scene.collection.objects.link(replacement)
+    _copy_vertex_groups(obj,replacement,used)
+    _copy_shape_keys(me,replacement,used)
+    new.normals_split_custom_set(normals)
+    names=[g.name for g in replacement.vertex_groups]
+    obj.vertex_groups.clear()
+    obj.data=new
+    for name in names:
+        if name not in obj.vertex_groups:
+            obj.vertex_groups.new(name=name)
+    bpy.data.objects.remove(replacement,do_unlink=True)
+    return {'added_vertices':added,'tolerance':tolerance,'normals_preserved':True}
+
+
 def _copy_mesh_subset(src_obj, face_ids: list[int], name: str) -> tuple[bpy.types.Object, list[int]]:
     """Build a new mesh object from a subset of faces of `src_obj`."""
     src_me = src_obj.data
@@ -99,10 +174,11 @@ def _copy_mesh_subset(src_obj, face_ids: list[int], name: str) -> tuple[bpy.type
     for k, fid in enumerate(face_ids):
         new_me.polygons[k].material_index = slot_map[src_me.polygons[fid].material_index]
         new_me.polygons[k].use_smooth = src_me.polygons[fid].use_smooth
+    if src_me.has_custom_normals:
+        new_me.normals_split_custom_set([src_me.corner_normals[li].vector for fid in face_ids for li in src_me.polygons[fid].loop_indices])
 
     # --- UVs ---
-    uv_src = src_me.uv_layers.active
-    if uv_src is not None:
+    for uv_src in src_me.uv_layers:
         uv_new = new_me.uv_layers.new(name=uv_src.name)
         base = 0
         for fid in face_ids:
@@ -111,6 +187,8 @@ def _copy_mesh_subset(src_obj, face_ids: list[int], name: str) -> tuple[bpy.type
             for j, li in enumerate(src_poly.loop_indices):
                 uv_new.data[base + j].uv = uv_src.data[li].uv
             base += n
+    if src_me.uv_layers.active:
+        new_me.uv_layers.active_index = src_me.uv_layers.active_index
 
     # --- weights and morphs ---
     groups = _copy_vertex_groups(src_obj, new_obj, used)

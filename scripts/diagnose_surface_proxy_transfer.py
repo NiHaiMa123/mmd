@@ -1,0 +1,15 @@
+"""Separate solver strain, pin motion and display-transfer distortion."""
+import sys,json,argparse
+from pathlib import Path
+import bpy,numpy as np
+from mathutils.bvhtree import BVHTree
+ROOT=Path(__file__).resolve().parents[1];sys.path.insert(0,str(ROOT/'addon'))
+from mmd_outfit.service import engine
+from animation_contact_tools.surface import coords
+from animation_contact_tools.exact_skin_collider import build_exact_skin_topology
+from animation_contact_tools.closed_collider_field import ClosedColliderField
+p=argparse.ArgumentParser();p.add_argument('--run',required=True);a=p.parse_args(sys.argv[sys.argv.index('--')+1:]);run=Path(a.run);setup=json.loads((run/'setup.json').read_text('utf8'));profile=json.loads(Path(setup['bundle']['source_profile']).read_text('utf8'));data=np.load(run/'native_integer.npz');engine('import_export').ensure_mmd_tools();bpy.ops.wm.open_mainfile(filepath=str(run/'SurfaceProxy_Live_Unbaked.blend'),load_ui=False,use_scripts=False);proxy=next(o for o in bpy.context.scene.objects if o.name.startswith('HairProxy_') and any(m.type=='CLOTH' for m in o.modifiers));mesh=bpy.data.objects[profile['mesh']];arm=bpy.data.objects[profile['armature']];bpy.context.scene.frame_set(1);bpy.context.view_layer.update();pe=np.array([e.vertices[:] for e in proxy.data.edges]);rest=data['proxy_coordinates'][0];length=np.linalg.norm(rest[pe[:,0]]-rest[pe[:,1]],axis=1);valid=length>1e-5;group=proxy.vertex_groups['HairProxy_Attachment'].index;pins=np.array([sum(g.weight for g in v.groups if g.group==group) for v in proxy.data.vertices])>.999;skin_ids,skin_faces,meta=build_exact_skin_topology(mesh,arm,profile,triangulate=True);co=coords(mesh);field=ClosedColliderField(co[skin_ids],skin_faces);d,_=field(rest);pf=[tuple(f.vertices) for f in proxy.data.polygons];pt=BVHTree.FromPolygons(rest.tolist(),pf,all_triangles=True);st=BVHTree.FromPolygons(co[skin_ids].tolist(),skin_faces,all_triangles=True);rows=[];head0=np.array(arm.matrix_world@arm.pose.bones[setup['bundle']['anchor_bone']].matrix)
+for f in (1,2,5,10,20,30):
+ if f>len(data['proxy_coordinates']):continue
+ pc=data['proxy_coordinates'][f-1];ratio=np.linalg.norm(pc[pe[:,0]]-pc[pe[:,1]],axis=1)[valid]/length[valid];bpy.context.scene.frame_set(f);bpy.context.view_layer.update();head=np.array(arm.matrix_world@arm.pose.bones[setup['bundle']['anchor_bone']].matrix);delta=head@np.linalg.inv(head0);expected=rest[pins]@delta[:3,:3].T+delta[:3,3];rows.append({'frame':f,'proxy_min_edge_ratio':float(ratio.min()),'proxy_max_edge_ratio':float(ratio.max()),'proxy_edge_p01':float(np.percentile(ratio,1)),'proxy_edge_p99':float(np.percentile(ratio,99)),'proxy_hard_pin_error_m':float(np.max(np.linalg.norm(pc[pins]-expected,axis=1)))})
+r={'proxy_initial_skin_min_signed_m':float(d.min()),'proxy_initial_points_inside_skin':int((d<0).sum()),'proxy_initial_triangle_crossings':len(pt.overlap(st)),'proxy_min_rest_edge_m':float(length.min()),'samples':rows};(run/'transfer_diagnosis.json').write_text(json.dumps(r,indent=2),encoding='utf8');print('SURFACE_TRANSFER_DIAGNOSIS',json.dumps(r),flush=True)

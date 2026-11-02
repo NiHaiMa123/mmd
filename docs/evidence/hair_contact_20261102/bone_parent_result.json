@@ -1,0 +1,107 @@
+{
+  "status": "STOPPED_RESIDUAL_INTRUSION_OVER_5CM",
+  "checked_source_frames": [
+    1,
+    226,
+    331,
+    376,
+    411,
+    450
+  ],
+  "maximum_sampled_depth_cm": 5.905278772115707,
+  "worst_frame": 411,
+  "worst_seconds": 13.666666666666666,
+  "worst_chains": [
+    {
+      "chain": "Sidehair1.R",
+      "display_vertices": 910,
+      "inside_vertices": 776,
+      "maximum_inward_depth_cm": 5.905278772115707,
+      "embedded_display_patch_extent": {
+        "aabb_span_cm": [
+          3.8331687450408936,
+          7.025706768035889,
+          15.536344528198242
+        ],
+        "principal_axis_span_cm": 15.812024116516113
+      }
+    },
+    {
+      "chain": "Sidetail1.L",
+      "display_vertices": 1076,
+      "inside_vertices": 194,
+      "maximum_inward_depth_cm": 2.209063060581684,
+      "embedded_display_patch_extent": {
+        "aabb_span_cm": [
+          4.86598014831543,
+          4.22818660736084,
+          4.313468933105469
+        ],
+        "principal_axis_span_cm": 5.736246109008789
+      }
+    },
+    {
+      "chain": "Sidehair1.L",
+      "display_vertices": 673,
+      "inside_vertices": 132,
+      "maximum_inward_depth_cm": 2.039601281285286,
+      "embedded_display_patch_extent": {
+        "aabb_span_cm": [
+          2.5996148586273193,
+          1.443028450012207,
+          3.0092239379882812
+        ],
+        "principal_axis_span_cm": 3.023019313812256
+      }
+    },
+    {
+      "chain": "Amikomi1",
+      "display_vertices": 5986,
+      "inside_vertices": 108,
+      "maximum_inward_depth_cm": 1.6592847183346748,
+      "embedded_display_patch_extent": {
+        "aabb_span_cm": [
+          2.2092580795288086,
+          1.5923261642456055,
+          3.958308696746826
+        ],
+        "principal_axis_span_cm": 4.489945888519287
+      }
+    },
+    {
+      "chain": "Hair5-1.L",
+      "display_vertices": 301,
+      "inside_vertices": 26,
+      "maximum_inward_depth_cm": 1.6406586393713951,
+      "embedded_display_patch_extent": {
+        "aabb_span_cm": [
+          2.9050827026367188,
+          0.41157007217407227,
+          2.6086807250976562
+        ],
+        "principal_axis_span_cm": 3.483441114425659
+      }
+    },
+    {
+      "chain": "Hair_in3-1.L",
+      "display_vertices": 216,
+      "inside_vertices": 42,
+      "maximum_inward_depth_cm": 1.372161228209734,
+      "embedded_display_patch_extent": {
+        "aabb_span_cm": [
+          3.991377353668213,
+          1.2939691543579102,
+          8.51602554321289
+        ],
+        "principal_axis_span_cm": 9.1480073928833
+      }
+    }
+  ],
+  "collider_binding": "bone-parent",
+  "collider_matrix_error_at_native_solve": 0.0,
+  "native_solve_observations": 451,
+  "upstream_code_unchanged": true,
+  "full_video_started": false,
+  "original_files_preserved": true,
+  "limitations": "Six selected source frames only; known failed frame411 independently rechecked; no whole-window pass or continuous-contact claim."
+}

@@ -1,0 +1,4 @@
+interface:
+  display_name: "动画接触修复"
+  short_description: "检测真实网格穿插，保留有意接触，生成可撤销的身体修正层"
+  default_prompt: "使用 $repair-animation-contact 检测并修复普通身体穿插，保留有意接触，并单独验收头发。"

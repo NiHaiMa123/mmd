@@ -1,0 +1,5 @@
+# Isolated Windows backend probe. PyTorch is installed separately from the
+# official CPU wheel index; Genesis CPU integration + native IPC CUDA backend.
+# See docs/CONTACT_BACKEND_PROBE_2026-10-27.md. Not Blender's Python environment.
+genesis-world==1.4.5
+pyuipc==0.0.29

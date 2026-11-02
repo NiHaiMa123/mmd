@@ -1,0 +1,30 @@
+{
+  "checked_date": "2026-11-02",
+  "official_current_commit": "792db09a22cd5c7dc5b5c1b4eb0ea12c4af3e6b1",
+  "official_current_release": "v4.5.3",
+  "release_url": "https://github.com/naelstrof/blender-jiggle-physics/releases/tag/v4.5.3",
+  "release_matches_local_vendor": true,
+  "constraint_driven_colliders": {
+    "author_url": "https://github.com/naelstrof/blender-jiggle-physics/issues/11#issuecomment-3058691780",
+    "finding": "Author states colliders positioned by constraints are unsupported due to Jiggle/dependency-graph evaluation order.",
+    "community_bone_parent_suggestion": "https://github.com/naelstrof/blender-jiggle-physics/issues/11#issuecomment-3058411767",
+    "applied": "Replace Child Of constraints with direct bone parenting while preserving current-frame world transforms. No upstream solver code changed."
+  },
+  "collision_backward_propagation": {
+    "url": "https://github.com/naelstrof/blender-jiggle-physics/releases/tag/v4.1.0",
+    "finding": "Back-propagation for collisions is an intentional published feature. Local no-contact branch difference is reproduced, but this alone does not establish an upstream bug or explain all residual intrusion.",
+    "no_published_decoupling_fix_found_in_reviewed_sources": true,
+    "review_scope": "Current main and 25 recent commits, 10 releases, all5 returned pull requests, collision-related issue search; not an exhaustive audit of every fork."
+  },
+  "community_mesh_collision_pr": {
+    "url": "https://github.com/naelstrof/blender-jiggle-physics/pull/47",
+    "state_at_review": "open_unmerged",
+    "repository": "Noisysundae/blender-jiggle-physics-ns",
+    "commit": "00a01ff31f8d4cea3c07efd5f030e3f15b93398a",
+    "changes": ["Limit nearest-surface query to collision radius", "Use previous-position ray cast for crossing", "Ignore mesh backface to address trapping", "Avoid duplicate particle children"],
+    "does_not_change_constrain_collision_branch": true,
+    "installed_or_executed": false,
+    "validated_on_character": false
+  },
+  "messages_sent_to_authors": false
+}

@@ -1,0 +1,4 @@
+import argparse,json
+from pathlib import Path
+import numpy as np
+p=argparse.ArgumentParser();p.add_argument('--delivery',required=True);p.add_argument('--reports',nargs='+',required=True);a=p.parse_args();out=Path(a.delivery);reports=[json.loads((out/name).read_text('utf8')) for name in a.reports];assert all(r['status']=='NATIVE_BLENDER_FULL_HEAD_SAMPLED_BODY_CONTACT_ROOT_REPLAY_PASS' for r in reports);rows=sorted([row for r in reports for row in r['rows']],key=lambda x:x['frame']);expected=np.arange(1,450.00001,.125);assert len(rows)==len(expected);np.testing.assert_array_equal([r['frame'] for r in rows],expected);result=dict(reports[0],frames=expected.tolist(),samples=len(rows),rows=rows,elapsed_s=sum(r['elapsed_s'] for r in reports),merged_reports=a.reports,sample_step=.125);(out/'native_geometry_audit.json').write_text(json.dumps(result,ensure_ascii=False,indent=2),encoding='utf8');print('ALL_3593_NATIVE_FULL_HEAD_SAMPLES_PASS',flush=True)

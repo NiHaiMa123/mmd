@@ -4,6 +4,8 @@ assets/*
 
 # 运行产物
 outputs/
+tools/ppf/
+tools/contact_stack/
 *.blend1
 
 # Python
@@ -11,3 +13,41 @@ __pycache__/
 *.py[cod]
 .venv/
 venv/
+
+# 本地依赖、第三方运行时和生成包（只备份源码与项目文档）
+**/node_modules/
+/tools/mmdbridge_native/
+/tools/mmd_headless/bake.bundle.mjs
+/dist/
+/skills/**/assets/*.zip
+.env
+.env.*
+!.env.example
+
+# 模型、工程、媒体与模拟缓存保留本机
+*.blend
+*.blend[0-9]
+*.pc2
+*.abc
+*.bphys
+*.pmx
+*.pmd
+*.pmm
+*.vmd
+*.vpd
+*.fbx
+*.mp4
+*.mkv
+*.avi
+*.mov
+*.mp3
+*.wav
+*.flac
+*.npz
+*.npy
+*.bin
+*.exe
+*.dll
+*.pyd
+*.wasm
+*.7z

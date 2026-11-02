@@ -1,0 +1,86 @@
+{
+  "status": "STOPPED_RESIDUAL_INTRUSION_OVER_5CM",
+  "samples": 225,
+  "maximum_depth_cm": 6.564889848232269,
+  "worst_frame": 412,
+  "worst_seconds": 13.7,
+  "frames_over_5cm": [
+    277,
+    408,
+    409,
+    410,
+    411,
+    412,
+    413,
+    414,
+    415,
+    416,
+    417,
+    418,
+    419,
+    420,
+    421,
+    422,
+    423,
+    424,
+    425,
+    426,
+    431,
+    432,
+    433
+  ],
+  "worst_frame_chains": [
+    {
+      "chain": "Sidehair1.R",
+      "display_vertices": 910,
+      "inside_vertices": 766,
+      "maximum_inward_depth_cm": 6.556793302297592,
+      "embedded_display_patch_extent": {
+        "aabb_span_cm": [
+          6.951993942260742,
+          6.3057661056518555,
+          13.64758014678955
+        ],
+        "principal_axis_span_cm": 14.739065170288086
+      }
+    },
+    {
+      "chain": "Sidetail1.L",
+      "display_vertices": 1076,
+      "inside_vertices": 61,
+      "maximum_inward_depth_cm": 0.8934630081057549,
+      "embedded_display_patch_extent": {
+        "aabb_span_cm": [
+          3.721541166305542,
+          2.6356101036071777,
+          1.8492817878723145
+        ],
+        "principal_axis_span_cm": 4.473396301269531
+      }
+    },
+    {
+      "chain": "Hair5-1.L",
+      "display_vertices": 301,
+      "inside_vertices": 3,
+      "maximum_inward_depth_cm": 0.31058983877301216,
+      "embedded_display_patch_extent": {
+        "aabb_span_cm": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "principal_axis_span_cm": 0.0
+      }
+    }
+  ],
+  "maximum_body_error_m": 0.0,
+  "full_video_started": false,
+  "community_source_unmodified": true,
+  "physics_accepted": false,
+  "zero_penetration_claim": false,
+  "community_shallow_crossing_probe_passed": false,
+  "worst_bone_point_depth_cm": 5.766767635941505,
+  "confirmed_failure_not_limited_to_surface_width": true,
+  "root_cause_of_complete_character_history_proven": false,
+  "source_code_modified_after_probe": false
+}

@@ -1,0 +1,10 @@
+{
+  "queries": [
+    {"axis": "换装流程", "query": "MMD 换装 权重 转移"},
+    {"axis": "Blender换装", "query": "Blender MMD 换装 教程"},
+    {"axis": "变形故障", "query": "Blender 衣服 权重 褶皱"},
+    {"axis": "布料参数", "query": "Blender 布料 弯曲 刚度 褶皱"},
+    {"axis": "MMD物理", "query": "MMD 裙子 刚体 物理 教程"},
+    {"axis": "传递机制", "query": "Blender 表面形变 衣服 绑定"}
+  ]
+}

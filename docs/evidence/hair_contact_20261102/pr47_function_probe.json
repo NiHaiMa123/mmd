@@ -1,0 +1,84 @@
+{
+  "status": "COMMUNITY_MESH_FUNCTION_PROBE",
+  "cases": [
+    {
+      "name": "outside_near",
+      "result": [
+        -0.009999999776482582,
+        0.0,
+        0.0
+      ],
+      "expected": [
+        -0.01,
+        0,
+        0
+      ],
+      "error_m": 0.0,
+      "passed": true
+    },
+    {
+      "name": "cross_front",
+      "result": [
+        -0.009999999776482582,
+        0.0,
+        0.0
+      ],
+      "expected": [
+        -0.01,
+        0,
+        0
+      ],
+      "error_m": 0.0,
+      "passed": true
+    },
+    {
+      "name": "outside_stationary",
+      "result": [
+        -0.05000000074505806,
+        0.0,
+        0.0
+      ],
+      "expected": [
+        -0.05,
+        0,
+        0
+      ],
+      "error_m": 0.0,
+      "passed": true
+    },
+    {
+      "name": "inside_stationary",
+      "result": [
+        0.05000000074505806,
+        0.0,
+        0.0
+      ],
+      "expected": [
+        0.05,
+        0,
+        0
+      ],
+      "error_m": 0.0,
+      "passed": true
+    },
+    {
+      "name": "exit_from_inside",
+      "result": [
+        -0.029999999329447746,
+        0.0,
+        0.0
+      ],
+      "expected": [
+        -0.03,
+        0,
+        0
+      ],
+      "error_m": 0.0,
+      "passed": true
+    }
+  ],
+  "passed": true,
+  "plugin_source_sha256": "1334a8b452745fc7201cf6c05d6982bfe0a33b2c67335420025b260cb16c2b57",
+  "solver_modified": false,
+  "simulation_started": false
+}

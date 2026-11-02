@@ -1,0 +1,43 @@
+{
+  "status": "BAKED_ORIGINAL_DANCE_REQUIRES_VISUAL_REVIEW",
+  "blend": "E:\\project\\mmd\\work\\headswap_xl_codex\\jiggle_pr47_mesh_20261102\\candidate01\\完整角色_原舞蹈_根部点锚定_社区网格碰撞_15秒.blend",
+  "action": "Jiggle原版_原舞蹈_根部点锚定_社区网格碰撞_450帧",
+  "frames": [
+    1,
+    450
+  ],
+  "fps": 30,
+  "active_bones": 126,
+  "full_head_chains": 27,
+  "body_bone_max_error": 0.0,
+  "body_skin_max_error_m": 0.0,
+  "root_point_anchor_error_m": 7.633119025740598e-07,
+  "strain_flags": [],
+  "collisions": true,
+  "collision_mode": "COMMUNITY_PR47_ACTUAL_SKIN_MESH",
+  "plugin_provenance": {
+    "repository": "Noisysundae/blender-jiggle-physics-ns",
+    "commit": "00a01ff31f8d4cea3c07efd5f030e3f15b93398a",
+    "base_commit": "792db09a22cd5c7dc5b5c1b4eb0ea12c4af3e6b1",
+    "pr_url": "https://github.com/naelstrof/blender-jiggle-physics/pull/47",
+    "pr_state": "open",
+    "pr_unmerged": true,
+    "github_blob_sha": "e65b6da85983481146dd9e633f3cb658bcf7d111",
+    "source_dir": "E:\\project\\mmd\\work\\headswap_xl_codex\\jiggle_pr47_mesh_20261102\\vendor\\Noisysundae_00a01ff31f8d",
+    "source_url": "https://github.com/Noisysundae/blender-jiggle-physics-ns/blob/00a01ff31f8d4cea3c07efd5f030e3f15b93398a/__init__.py",
+    "supplementary_files_copied_from_pinned_upstream_base": true,
+    "local_solver_edits": false,
+    "source_sha256": "1334a8b452745fc7201cf6c05d6982bfe0a33b2c67335420025b260cb16c2b57",
+    "github_blob_sha_verified": true,
+    "ast_changes_limited_to": [
+      "VirtualParticle.set_child",
+      "VirtualParticle.mesh_collide"
+    ]
+  },
+  "no_collision_confirmed_in_every_observed_step": false,
+  "collision_confirmed_in_every_observed_step": true,
+  "plugin_source_sha256": "1334a8b452745fc7201cf6c05d6982bfe0a33b2c67335420025b260cb16c2b57",
+  "source_animation_preserved": true,
+  "new_per_frame_corrective_motion": false,
+  "elapsed_s": 42.372066999996605
+}

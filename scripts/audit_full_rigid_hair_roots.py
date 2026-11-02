@@ -1,0 +1,15 @@
+"""Full-range actual hard-root feasibility before solving flexible hair."""
+import sys,json
+from pathlib import Path
+import bpy,numpy as np
+from mathutils.bvhtree import BVHTree
+ROOT=Path(__file__).resolve().parents[1];sys.path.insert(0,str(ROOT/'addon'))
+from mmd_outfit.service import engine
+from animation_contact_tools.surface import coords,regions
+from animation_contact_tools.exact_skin_collider import build_exact_skin_topology
+from animation_contact_tools.closed_collider_field import ClosedColliderField
+root=ROOT.parent/'work/headswap_xl_codex/contact_repair_20261029/multi_bundle';base=root/'left_arm_feedback_rig_roots';report=json.loads((base/'report.json').read_text('utf8'));profile=json.loads((base/'profile.json').read_text('utf8'));envelope=json.loads((base/'envelope.json').read_text('utf8'));initial=np.load(root/'left_native/initial_projection.npz');ids=initial['ids'];pinned=np.isin(ids,envelope['attachment_vertex_ids']);points=initial['coordinates'];lookup={int(v):i for i,v in enumerate(ids)};bind=np.array(envelope['anchor_bind_matrix']);engine('import_export').ensure_mmd_tools();bpy.ops.wm.open_mainfile(filepath=report['candidate'],load_ui=False,use_scripts=False);mesh=bpy.data.objects[profile['mesh']];arm=bpy.data.objects[profile['armature']];parts=regions(mesh,arm,profile);rootfaces=[tuple(lookup[i] for i in f) for role in ('hair_root','hair_mobile') for f in parts['faces'][role] if all(i in lookup and pinned[lookup[i]] for i in f)];skin_ids,skin_faces,meta=build_exact_skin_topology(mesh,arm,profile,triangulate=True);rows=[]
+for frame in np.arange(1,450.001,.5):
+ bpy.context.scene.frame_set(int(frame),subframe=frame%1);bpy.context.view_layer.update();co=coords(mesh);delta=np.array(arm.matrix_world@arm.pose.bones[envelope['anchor_bone']].matrix)@np.linalg.inv(bind);world=points@delta[:3,:3].T+delta[:3,3];field=ClosedColliderField(co[skin_ids],skin_faces);d,_=field(world[pinned]);tree=BVHTree.FromPolygons(world.tolist(),rootfaces,all_triangles=True);skin=BVHTree.FromPolygons(co[skin_ids].tolist(),skin_faces,all_triangles=True);crossings=len(tree.overlap(skin));rows.append({'frame':float(frame),'minimum_signed_m':float(d.min()),'root_triangle_crossings':crossings,'inside_points':int((d<0).sum()),'intentional_contact_window':any(w['start']<=frame<=w['end'] for w in profile.get('protected_windows',[]))})
+ if frame%25==1:print('FULL_ROOT_AUDIT',float(frame),float(d.min()),crossings,flush=True)
+result={'status':'FULL_RANGE_RIGID_ROOT_SAMPLED_PASS' if all(r['minimum_signed_m']>=0 and r['root_triangle_crossings']==0 for r in rows) else 'RIGID_ROOT_SPACE_UNRESOLVED','source':report['candidate'],'root_pin_count':int(pinned.sum()),'root_triangles':len(rootfaces),'sample_step':.5,'sample_count':len(rows),'failed_samples':sum(r['minimum_signed_m']<0 or r['root_triangle_crossings']>0 for r in rows),'samples':rows,'ccd_proven':False};(root/'full_rigid_root_audit.json').write_text(json.dumps(result,ensure_ascii=False,indent=2),encoding='utf8');print('FULL_ROOT_AUDIT_COMPLETE',json.dumps({k:v for k,v in result.items() if k!='samples'}),flush=True)

@@ -1,39 +1,13 @@
-"""Simulate MMD physics inside Blender (P3-03 / P3-04 support).
+"""Blender physics diagnostics; these are not native MMD runtime acceptance.
 
-mmd_tools does not map the MMD collision groups onto Blender's rigid body
-collections, so a Bullet simulation of an imported model ignores the MMD
-collision rules completely.  It also never drives the bones from the physics,
-which is what MMD does for mode 1 / 2 rigid bodies.
+Use setup_native: installed MMD Tools constructs parenting, rotation-only
+mode-2 constraints and pairwise non-collision constraints. Diagnostics extend
+the distance limit to cover all exclusions, then detach pre-physics kinematic
+tracks. Feedback from secondary physics into those tracks is not simulated.
 
-This module fills both gaps:
-
-  * the MMD collision group of every rigid body becomes a Blender collision
-    collection, and the MMD collision mask becomes the collection
-    membership, so two bodies collide when they share a layer - an
-    approximation of the MMD rule, which needs both masks to allow the pair;
-  * the MMD dynamics type becomes the Blender body type
-    (0 follow bone -> KINEMATIC, 1 / 2 physics -> ACTIVE);
-  * the mode 0 bodies are keyframed from the bone they follow, and a frame
-    change handler copies the simulated motion of the mode 1 / 2 bodies back
-    onto their bones - that is MMD's "physics drives the bone" step.
-
-Usage (inside Blender, after importing a PMX and a VMD):
-
-    from src import physics_sim
-    physics_sim.setup(scene, arm_obj, first_frame, last_frame)
-    physics_sim.run(scene, first_frame, last_frame)
-
-The MMD collision mask is an "allowed to collide with" list - verified from
-the models themselves: in 达妮娅 the hair sits in group 1 with the mask {1}
-and the torso in group 0 with the mask {0}, so the two never collide.
-
-MMD needs both directions to allow the pair: A's mask has to contain B's
-group *and* B's mask has to contain A's group.  Blender's rigid body world
-works with collection layers instead, and a body collides with another one
-as soon as they share a layer - that is weaker than the MMD rule.  The
-translation below is therefore an **approximation**: the physics QA says
-whether the outfit is allowed to touch the base body, it is not a faithful
-MMD simulation.  See docs/REVIEW.md (P0-02).
+mmd_tools collision_group_mask True means EXCLUDED, whereas a raw PMX bit
+True means ALLOWED. The former legacy layer/pose-handler solver remains as
+setup_legacy_proxy for historical comparison and is not used by QA.
 """
 from __future__ import annotations
 
@@ -78,14 +52,8 @@ def collision_slots(r: bpy.types.Object, slot_of: dict[int, int],
                      ) -> list[bool]:
     """Blender's collision layers for one body, with the MMD rule applied.
 
-    MMD lets two bodies collide when A's mask contains B's group *and* B's
-    mask contains A's group.  Blender only asks one side: a body touches
-    every body in a collection it has enabled.  Measured on Blender 5.2.1
-    (work/test_collision_filter.py): one side is enough.
-
-    So the group list is narrowed down per body: a group is only kept when
-    the bodies in it also allow this body's group.  With one mask per group
-    that turns Blender's rule into MMD's rule exactly.
+    Legacy layer approximation. mmd_tools True means excluded. Shared layer
+    bits cannot encode arbitrary pairs, so prefer setup_native for simulation.
     """
     g = r.mmd_rigid.collision_group_number
     mask = list(r.mmd_rigid.collision_group_mask)
@@ -93,10 +61,10 @@ def collision_slots(r: bpy.types.Object, slot_of: dict[int, int],
         group_masks = _group_masks([r])
     slots = [False] * 20
     for other, slot in slot_of.items():
-        if other >= len(mask) or not mask[other]:
+        if other >= len(mask) or mask[other]:
             continue
         other_mask = group_masks.get(other)
-        if other_mask is None or g >= len(other_mask) or not other_mask[g]:
+        if other_mask is None or g >= len(other_mask) or other_mask[g]:
             continue
         slots[slot] = True
     return slots
@@ -125,11 +93,14 @@ def _bounding_radius(obj: bpy.types.Object) -> float:
 
 def _pair_table(rigids: list[bpy.types.Object]
                 ) -> list[tuple[int, int, bool, bool]]:
-    """(i, j, allowed by PMX, shares a layer) for every pair of bodies.
+    """(i, j, allowed by PMX mask, effective Blender filter) for each pair.
 
     The rules do not change while the simulation runs, so the table is
     built once and the per frame reports only have to measure distances.
     """
+    blocked = {frozenset((o.rigid_body_constraint.object1, o.rigid_body_constraint.object2))
+               for o in bpy.data.objects if o.rigid_body_constraint
+               and o.rigid_body_constraint.enabled and o.rigid_body_constraint.disable_collisions}
     data = []
     for r in rigids:
         rb = r.rigid_body
@@ -143,11 +114,9 @@ def _pair_table(rigids: list[bpy.types.Object]
         gi, mi, li = data[i]
         for j in range(i + 1, n):
             gj, mj, lj = data[j]
-            # mmd_rigid.collision_group_mask[g] is True when the two groups
-            # may collide - the PMX file stores the opposite, the groups a
-            # body does *not* collide with
-            allowed = (gj < len(mi) and mi[gj]) and (gi < len(mj) and mj[gi])
-            table.append((i, j, allowed, bool(li & lj)))
+            allowed = (gj < len(mi) and not mi[gj]) and (gi < len(mj) and not mj[gi])
+            effective = bool(li & lj) and frozenset((rigids[i], rigids[j])) not in blocked
+            table.append((i, j, allowed, effective))
     return table
 
 
@@ -159,16 +128,11 @@ def contact_matrix_report(rigids: list[bpy.types.Object],
                          ) -> dict[str, Any]:
     """How far is Blender's collision rule from the MMD one?
 
-    MMD lets two bodies collide when neither of them excludes the other's
-    group.  Blender asks one side only, and the layer bits are shared by a
-    whole group, so two bodies that both allow a third group collide even
-    though MMD would keep them apart.  A group mask cannot express an
-    arbitrary pair matrix, and 355 bodies need far more than 20 layers.
-
-    So the translation is an approximation, and this measures how bad it is:
-    every pair of bodies is checked against both rules, and the pairs that
-    differ are counted.  Without this the physics QA would claim a fidelity
-    it does not have.
+    Compare mutual exclusions with shared Blender layers AND enabled
+    no-collision constraints. MMD Tools adds those constraints only inside
+    its configured distance, so far-away exclusions can still differ.
+    Historical *_layer_pairs names are kept for report compatibility, but
+    the effective filter now includes no-collision constraints.
 
     What is counted here are **potential pairs**, not contacts: nothing in
     this report says that bullet ever generated a contact manifold for a
@@ -275,7 +239,160 @@ def contact_matrix_report(rigids: list[bpy.types.Object],
     }
 
 
-def setup(scene: bpy.types.Scene, arm: bpy.types.Object,
+def setup_native(scene, arm, first_frame=1, last_frame=5000, outfit_groups=None,
+                 break_outfit_body=False):
+    """Use the installed MMD Tools rig builder, including mode-2 rotation only.
+
+    No frame handlers write pose matrices; no kinematic trajectories are baked
+    from an already-running simulation. Results remain Blender Bullet results.
+    """
+    unregister()
+    root = arm
+    while root is not None and getattr(root, 'mmd_type', 'NONE') != 'ROOT':
+        root = root.parent
+    if root is not None and root.mmd_root.is_built:
+        raise ValueError('Physics diagnostic requires a fresh unbuilt import; reimport the PMX')
+    rigids = _rigids()
+    if not rigids:
+        raise ValueError('No MMD rigid bodies')
+    if scene.rigidbody_world:
+        scene.rigidbody_world.enabled = False
+    tracks, bake_report = capture_kinematic_tracks(scene, arm, rigids, first_frame, last_frame)
+    print('PHYSICS_CAPTURED: animation-only kinematic tracks', flush=True)
+    broken = 0
+    if break_outfit_body and outfit_groups:
+        outfit = set(outfit_groups)
+        body = {r.mmd_rigid.collision_group_number for r in rigids} - outfit
+        for r in rigids:
+            mask = list(r.mmd_rigid.collision_group_mask)
+            for group in (body if r.mmd_rigid.collision_group_number in outfit else outfit):
+                if not mask[group]:
+                    mask[group] = True
+                    broken += 1
+            r.mmd_rigid.collision_group_mask = mask
+    exclusion_scale = complete_exclusion_scale(rigids)
+    scene.frame_set(first_frame)
+    for obj in bpy.context.selected_objects:
+        obj.select_set(False)
+    arm.hide_set(False)
+    arm.select_set(True)
+    bpy.context.view_layer.objects.active = arm
+    bpy.ops.mmd_tools.build_rig(non_collision_distance_scale=exclusion_scale, collision_margin=1e-6)
+    print('PHYSICS_BUILT: complete collision exclusions', flush=True)
+    removed_relations = 0
+    for rigid in rigids:
+        bone_name = rigid.mmd_rigid.bone
+        for constraint in list(rigid.constraints):
+            if constraint.name == 'mmd_tools_rigid_parent' and constraint.mute:
+                rigid.constraints.remove(constraint)
+                removed_relations += 1
+        rigid.mmd_rigid['bone'] = bone_name
+    install_kinematic_tracks(tracks, first_frame)
+    world = scene.rigidbody_world
+    world.enabled = True
+    world.substeps_per_frame = 10
+    world.solver_iterations = 40
+    world.point_cache.frame_start = first_frame
+    world.point_cache.frame_end = last_frame
+    bpy.context.view_layer.update()
+    matrix = contact_matrix_report(rigids)
+    if matrix['false_positive_layer_pairs'] or matrix['false_negative_layer_pairs']:
+        raise RuntimeError('Exact PMX collision exclusion construction failed')
+    print('PHYSICS_SETUP_READY: exact exclusions and detached pre-physics kinematic tracks', flush=True)
+    modes = {str(i): sum(_mode(r) == str(i) for r in rigids) for i in range(3)}
+    tracking = [c for p in arm.pose.bones for c in p.constraints if c.name == 'mmd_tools_rigid_track']
+    return {'backend': 'mmd_tools.build_rig', 'rigid_bodies': len(rigids),
+            'mode_counts': modes, 'mode2_bodies': modes['2'],
+            'driven_bones': len(tracking), 'follow_bodies': modes['0'],
+            'rotation_only_constraints': sum(c.type == 'COPY_ROTATION' for c in tracking),
+            'transform_constraints': sum(c.type == 'COPY_TRANSFORMS' for c in tracking),
+            'broken_mask_bits': broken, 'frames': [first_frame, last_frame],
+            'contact_matrix': matrix, 'non_collision_distance_scale': exclusion_scale,
+            'kinematic_bake': bake_report,
+            'removed_muted_relations': removed_relations,
+            'scope': 'MMD Tools Blender physics, not native MMD runtime equivalence'}
+
+
+def complete_exclusion_scale(rigids):
+    """Cover every excluded pair using the installed builder's own distance rule."""
+    scale = 1.5
+    sizes = [(Vector(r.bound_box[0])-Vector(r.bound_box[6])).length for r in rigids]
+    for i, a in enumerate(rigids):
+        for j in range(i+1, len(rigids)):
+            b = rigids[j]
+            if not (a.mmd_rigid.collision_group_mask[b.mmd_rigid.collision_group_number]
+                    or b.mmd_rigid.collision_group_mask[a.mmd_rigid.collision_group_number]):
+                continue
+            span = (sizes[i]+sizes[j])*.5
+            if span <= 1e-10:
+                raise ValueError('Cannot build exact exclusions for two zero-size rigid bodies')
+            scale = max(scale, (a.location-b.location).length/span + 1.)
+    return scale
+
+
+def capture_kinematic_tracks(scene, arm, rigids, first, last):
+    """Capture animation before physics exists, never from a warmed simulation."""
+    dynamic = {r.mmd_rigid.bone for r in rigids if _mode(r) != '0' and r.mmd_rigid.bone}
+    def feedback(name):
+        visited, todo = set(), [name]
+        while todo:
+            n = todo.pop()
+            if n in visited:
+                continue
+            visited.add(n)
+            if n in dynamic:
+                return True
+            bone = arm.pose.bones.get(n)
+            if bone is None:
+                continue
+            if bone.parent:
+                todo.append(bone.parent.name)
+            todo.extend(c.subtarget for c in bone.constraints if getattr(c, 'target', None) == arm
+                        and getattr(c, 'subtarget', '') and not c.mute)
+        return False
+    tracks = []
+    for r in rigids:
+        if _mode(r) != '0':
+            continue
+        name = r.mmd_rigid.bone
+        rest = r.matrix_world.copy()
+        offset = (arm.matrix_world @ arm.data.bones[name].matrix_local).inverted() @ rest if name in arm.data.bones else None
+        tracks.append({'object': r, 'bone': name, 'offset': offset, 'rest': rest, 'values': []})
+    for frame in range(first, last+1):
+        scene.frame_set(frame)
+        bpy.context.view_layer.update()
+        evaluated = arm.evaluated_get(bpy.context.evaluated_depsgraph_get())
+        for track in tracks:
+            matrix = (evaluated.matrix_world @ evaluated.pose.bones[track['bone']].matrix @ track['offset']
+                      if track['offset'] is not None else track['rest'])
+            track['values'].append((frame, matrix.copy()))
+    scene.frame_set(first)
+    return tracks, {'bodies': len(tracks), 'frames': [first, last],
+                    'feedback_bones': sorted({t['bone'] for t in tracks if feedback(t['bone'])}),
+                    'stage': 'animation only, captured before build_rig',
+                    'limitation': 'secondary-physics feedback into kinematic followers is not simulated'}
+
+
+def install_kinematic_tracks(tracks, first):
+    for track in tracks:
+        r = track['object']
+        r.parent = None
+        r.parent_type = 'OBJECT'
+        # Muted constraints still create dependency-graph edges in Blender.
+        # The imported diagnostic copy needs no live armature relation now.
+        for constraint in list(r.constraints):
+            r.constraints.remove(constraint)
+        r.mmd_rigid['bone'] = track['bone']
+        r.animation_data_clear()
+        r.rotation_mode = 'QUATERNION'
+        for frame, matrix in track['values']:
+            r.location, r.rotation_quaternion, r.scale = matrix.decompose()
+            for path in ('location', 'rotation_quaternion', 'scale'):
+                r.keyframe_insert(path, frame=frame)
+        r.matrix_world = track['values'][0][1]
+
+
+def setup_legacy_proxy(scene: bpy.types.Scene, arm: bpy.types.Object,
           first_frame: int = 1, last_frame: int = 5000,
           outfit_groups: set[int] | None = None,
           break_outfit_body: bool = False) -> dict[str, Any]:
@@ -301,8 +418,8 @@ def setup(scene: bpy.types.Scene, arm: bpy.types.Object,
             # the outfit loses the body's groups, the body loses the outfit's
             other = body if g in outfit else outfit
             for og in other:
-                if og < len(mask) and mask[og]:
-                    mask[og] = False
+                if og < len(mask) and not mask[og]:
+                    mask[og] = True
                     broken_bits += 1
             r.mmd_rigid.collision_group_mask = mask
 

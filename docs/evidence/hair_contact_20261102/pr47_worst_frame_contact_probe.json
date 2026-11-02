@@ -1,0 +1,1921 @@
+{
+  "status": "BAKED_CHARACTER_MESH_CONTACT_DIAGNOSIS",
+  "frame": 412,
+  "rows": [
+    {
+      "bone": "Hair4-1.L",
+      "point": "head",
+      "skin_signed_distance_cm": 7.842966169118881,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair4-1.L",
+      "point": "tail",
+      "skin_signed_distance_cm": 8.196233212947845,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair4-2.L",
+      "point": "head",
+      "skin_signed_distance_cm": 8.150336891412735,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair4-2.L",
+      "point": "tail",
+      "skin_signed_distance_cm": 8.622413873672485,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair4-3.L",
+      "point": "head",
+      "skin_signed_distance_cm": 8.62179696559906,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair4-3.L",
+      "point": "tail",
+      "skin_signed_distance_cm": 8.347533643245697,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair4-4.L",
+      "point": "head",
+      "skin_signed_distance_cm": 8.345767855644226,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair4-4.L",
+      "point": "tail",
+      "skin_signed_distance_cm": 6.558883935213089,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair4-5.L",
+      "point": "head",
+      "skin_signed_distance_cm": 6.568320840597153,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair4-5.L",
+      "point": "tail",
+      "skin_signed_distance_cm": 4.514133185148239,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair4-6.L",
+      "point": "head",
+      "skin_signed_distance_cm": 4.537299275398254,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair4-6.L",
+      "point": "tail",
+      "skin_signed_distance_cm": 3.794287145137787,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "FrontHair5-3.R",
+      "point": "head",
+      "skin_signed_distance_cm": 1.0745669715106487,
+      "projection_cm": 0.9821359234936289,
+      "vertical_projection_cm": -0.37124156951904297
+    },
+    {
+      "bone": "FrontHair5-3.R",
+      "point": "tail",
+      "skin_signed_distance_cm": 1.2773660011589527,
+      "projection_cm": 0.08044605089391814,
+      "vertical_projection_cm": -0.017321109771728516
+    },
+    {
+      "bone": "Hair_in1-1.L",
+      "point": "head",
+      "skin_signed_distance_cm": 2.1055711433291435,
+      "projection_cm": 0.1904850068316896,
+      "vertical_projection_cm": 0.07319450378417969
+    },
+    {
+      "bone": "Hair_in1-1.L",
+      "point": "tail",
+      "skin_signed_distance_cm": 6.0023244470357895,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair_in1-2.L",
+      "point": "head",
+      "skin_signed_distance_cm": 5.926106870174408,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair_in1-2.L",
+      "point": "tail",
+      "skin_signed_distance_cm": 5.71381188929081,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair_in1-3.L",
+      "point": "head",
+      "skin_signed_distance_cm": 5.7113125920295715,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair_in1-3.L",
+      "point": "tail",
+      "skin_signed_distance_cm": 6.4156003296375275,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair_in1-4.L",
+      "point": "head",
+      "skin_signed_distance_cm": 6.417781114578247,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair_in1-4.L",
+      "point": "tail",
+      "skin_signed_distance_cm": 6.016857549548149,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair_in1-5.L",
+      "point": "head",
+      "skin_signed_distance_cm": 6.041752174496651,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair_in1-5.L",
+      "point": "tail",
+      "skin_signed_distance_cm": 3.5500086843967438,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair_in1-6.L",
+      "point": "head",
+      "skin_signed_distance_cm": 3.59145849943161,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair_in1-6.L",
+      "point": "tail",
+      "skin_signed_distance_cm": 3.3413682132959366,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Sidetail1.L",
+      "point": "head",
+      "skin_signed_distance_cm": 7.346649467945099,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Sidetail1.L",
+      "point": "tail",
+      "skin_signed_distance_cm": 6.315714865922928,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Sidetail2.L",
+      "point": "head",
+      "skin_signed_distance_cm": 6.386206299066544,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Sidetail2.L",
+      "point": "tail",
+      "skin_signed_distance_cm": 8.1096351146698,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Sidetail3.L",
+      "point": "head",
+      "skin_signed_distance_cm": 8.120080828666687,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Sidetail3.L",
+      "point": "tail",
+      "skin_signed_distance_cm": 5.500814691185951,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Sidetail4.L",
+      "point": "head",
+      "skin_signed_distance_cm": 5.495765432715416,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Sidetail4.L",
+      "point": "tail",
+      "skin_signed_distance_cm": 5.5090270936489105,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Sidetail5.L",
+      "point": "head",
+      "skin_signed_distance_cm": 5.5095188319683075,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Sidetail5.L",
+      "point": "tail",
+      "skin_signed_distance_cm": 3.6712951958179474,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Sidetail6.L",
+      "point": "head",
+      "skin_signed_distance_cm": 3.6929383873939514,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Sidetail6.L",
+      "point": "tail",
+      "skin_signed_distance_cm": 2.2331595420837402,
+      "projection_cm": 0.016838362786546032,
+      "vertical_projection_cm": 0.007617473602294922
+    },
+    {
+      "bone": "Hair2-1.R",
+      "point": "head",
+      "skin_signed_distance_cm": 8.41902419924736,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair2-1.R",
+      "point": "tail",
+      "skin_signed_distance_cm": 11.997059732675552,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair2-2.R",
+      "point": "head",
+      "skin_signed_distance_cm": 12.014413625001907,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair2-2.R",
+      "point": "tail",
+      "skin_signed_distance_cm": 13.45488429069519,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair2-3.R",
+      "point": "head",
+      "skin_signed_distance_cm": 13.443541526794434,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair2-3.R",
+      "point": "tail",
+      "skin_signed_distance_cm": 16.64203554391861,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair2-4.R",
+      "point": "head",
+      "skin_signed_distance_cm": 16.622059047222137,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair2-4.R",
+      "point": "tail",
+      "skin_signed_distance_cm": 12.325809895992279,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair2-5.R",
+      "point": "head",
+      "skin_signed_distance_cm": 12.34734058380127,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair2-5.R",
+      "point": "tail",
+      "skin_signed_distance_cm": 6.717752665281296,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair2-6.R",
+      "point": "head",
+      "skin_signed_distance_cm": 6.794418394565582,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair2-6.R",
+      "point": "tail",
+      "skin_signed_distance_cm": 5.38133904337883,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair1-1.L",
+      "point": "head",
+      "skin_signed_distance_cm": 8.545363694429398,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair1-1.L",
+      "point": "tail",
+      "skin_signed_distance_cm": 11.686088144779205,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair1-2.L",
+      "point": "head",
+      "skin_signed_distance_cm": 11.69796958565712,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair1-2.L",
+      "point": "tail",
+      "skin_signed_distance_cm": 13.158860802650452,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair1-3.L",
+      "point": "head",
+      "skin_signed_distance_cm": 13.157747685909271,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair1-3.L",
+      "point": "tail",
+      "skin_signed_distance_cm": 13.484667241573334,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair1-4.L",
+      "point": "head",
+      "skin_signed_distance_cm": 13.483820855617523,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair1-4.L",
+      "point": "tail",
+      "skin_signed_distance_cm": 11.471563577651978,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair1-5.L",
+      "point": "head",
+      "skin_signed_distance_cm": 11.484334617853165,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair1-5.L",
+      "point": "tail",
+      "skin_signed_distance_cm": 9.444566071033478,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair1-6.L",
+      "point": "head",
+      "skin_signed_distance_cm": 9.485635161399841,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair1-6.L",
+      "point": "tail",
+      "skin_signed_distance_cm": 8.769482374191284,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "FrontHair1-3",
+      "point": "head",
+      "skin_signed_distance_cm": 1.3911968097090721,
+      "projection_cm": 0.48925407875964255,
+      "vertical_projection_cm": -0.13556480407714844
+    },
+    {
+      "bone": "FrontHair1-3",
+      "point": "tail",
+      "skin_signed_distance_cm": 1.5359500423073769,
+      "projection_cm": 0.2186849198688758,
+      "vertical_projection_cm": -0.09181499481201172
+    },
+    {
+      "bone": "Hair5-1.R",
+      "point": "head",
+      "skin_signed_distance_cm": 4.919954016804695,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair5-1.R",
+      "point": "tail",
+      "skin_signed_distance_cm": 6.536315381526947,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair5-2.R",
+      "point": "head",
+      "skin_signed_distance_cm": 6.532442569732666,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair5-2.R",
+      "point": "tail",
+      "skin_signed_distance_cm": 7.9679712653160095,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair5-3.R",
+      "point": "head",
+      "skin_signed_distance_cm": 7.949450612068176,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair5-3.R",
+      "point": "tail",
+      "skin_signed_distance_cm": 11.76818460226059,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair5-4.R",
+      "point": "head",
+      "skin_signed_distance_cm": 11.739382147789001,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair5-4.R",
+      "point": "tail",
+      "skin_signed_distance_cm": 10.999646782875061,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair5-5.R",
+      "point": "head",
+      "skin_signed_distance_cm": 11.010272800922394,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair5-5.R",
+      "point": "tail",
+      "skin_signed_distance_cm": 8.298107981681824,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair5-6.R",
+      "point": "head",
+      "skin_signed_distance_cm": 8.316565304994583,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair5-6.R",
+      "point": "tail",
+      "skin_signed_distance_cm": 6.938637048006058,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair2-1.L",
+      "point": "head",
+      "skin_signed_distance_cm": 8.415354788303375,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair2-1.L",
+      "point": "tail",
+      "skin_signed_distance_cm": 11.003991961479187,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair2-2.L",
+      "point": "head",
+      "skin_signed_distance_cm": 10.982035845518112,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair2-2.L",
+      "point": "tail",
+      "skin_signed_distance_cm": 11.632127314805984,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair2-3.L",
+      "point": "head",
+      "skin_signed_distance_cm": 11.632059514522552,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair2-3.L",
+      "point": "tail",
+      "skin_signed_distance_cm": 11.794054508209229,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair2-4.L",
+      "point": "head",
+      "skin_signed_distance_cm": 11.79334744811058,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair2-4.L",
+      "point": "tail",
+      "skin_signed_distance_cm": 10.078904777765274,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair2-5.L",
+      "point": "head",
+      "skin_signed_distance_cm": 10.090002417564392,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair2-5.L",
+      "point": "tail",
+      "skin_signed_distance_cm": 8.01468938589096,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair2-6.L",
+      "point": "head",
+      "skin_signed_distance_cm": 8.056292682886124,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair2-6.L",
+      "point": "tail",
+      "skin_signed_distance_cm": 7.281767576932907,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair5-1.L",
+      "point": "head",
+      "skin_signed_distance_cm": 4.893700033426285,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair5-1.L",
+      "point": "tail",
+      "skin_signed_distance_cm": 5.423101410269737,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair5-2.L",
+      "point": "head",
+      "skin_signed_distance_cm": 5.317351967096329,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair5-2.L",
+      "point": "tail",
+      "skin_signed_distance_cm": 5.7633742690086365,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair5-3.L",
+      "point": "head",
+      "skin_signed_distance_cm": 5.766934901475906,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair5-3.L",
+      "point": "tail",
+      "skin_signed_distance_cm": 6.393586844205856,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair5-4.L",
+      "point": "head",
+      "skin_signed_distance_cm": 6.393136829137802,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair5-4.L",
+      "point": "tail",
+      "skin_signed_distance_cm": 5.632200464606285,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair5-5.L",
+      "point": "head",
+      "skin_signed_distance_cm": 5.635400861501694,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair5-5.L",
+      "point": "tail",
+      "skin_signed_distance_cm": 3.6136094480752945,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair5-6.L",
+      "point": "head",
+      "skin_signed_distance_cm": 3.6253832280635834,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair5-6.L",
+      "point": "tail",
+      "skin_signed_distance_cm": 2.887504920363426,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair4-1.R",
+      "point": "head",
+      "skin_signed_distance_cm": 7.8537315130233765,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair4-1.R",
+      "point": "tail",
+      "skin_signed_distance_cm": 9.842459112405777,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair4-2.R",
+      "point": "head",
+      "skin_signed_distance_cm": 9.835729002952576,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair4-2.R",
+      "point": "tail",
+      "skin_signed_distance_cm": 11.269211024045944,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair4-3.R",
+      "point": "head",
+      "skin_signed_distance_cm": 11.255770176649094,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair4-3.R",
+      "point": "tail",
+      "skin_signed_distance_cm": 14.574731886386871,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair4-4.R",
+      "point": "head",
+      "skin_signed_distance_cm": 14.55780416727066,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair4-4.R",
+      "point": "tail",
+      "skin_signed_distance_cm": 9.785491973161697,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair4-5.R",
+      "point": "head",
+      "skin_signed_distance_cm": 9.81140211224556,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair4-5.R",
+      "point": "tail",
+      "skin_signed_distance_cm": 5.578461289405823,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair4-6.R",
+      "point": "head",
+      "skin_signed_distance_cm": 5.618179962038994,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair4-6.R",
+      "point": "tail",
+      "skin_signed_distance_cm": 4.75662499666214,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "FrontHair2-3",
+      "point": "head",
+      "skin_signed_distance_cm": 2.097908966243267,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "FrontHair2-3",
+      "point": "tail",
+      "skin_signed_distance_cm": 2.2076955065131187,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair1-1.R",
+      "point": "head",
+      "skin_signed_distance_cm": 8.372388035058975,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair1-1.R",
+      "point": "tail",
+      "skin_signed_distance_cm": 11.865082383155823,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair1-2.R",
+      "point": "head",
+      "skin_signed_distance_cm": 11.88276931643486,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair1-2.R",
+      "point": "tail",
+      "skin_signed_distance_cm": 13.431312143802643,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair1-3.R",
+      "point": "head",
+      "skin_signed_distance_cm": 13.419735431671143,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair1-3.R",
+      "point": "tail",
+      "skin_signed_distance_cm": 15.616396069526672,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair1-4.R",
+      "point": "head",
+      "skin_signed_distance_cm": 15.630517899990082,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair1-4.R",
+      "point": "tail",
+      "skin_signed_distance_cm": 13.154666125774384,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair1-5.R",
+      "point": "head",
+      "skin_signed_distance_cm": 13.16319853067398,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair1-5.R",
+      "point": "tail",
+      "skin_signed_distance_cm": 9.693483263254166,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair1-6.R",
+      "point": "head",
+      "skin_signed_distance_cm": 9.76649671792984,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair1-6.R",
+      "point": "tail",
+      "skin_signed_distance_cm": 8.43724012374878,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Sidetail1.R",
+      "point": "head",
+      "skin_signed_distance_cm": 7.345368713140488,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Sidetail1.R",
+      "point": "tail",
+      "skin_signed_distance_cm": 4.230048507452011,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Sidetail2.R",
+      "point": "head",
+      "skin_signed_distance_cm": 4.219416528940201,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Sidetail2.R",
+      "point": "tail",
+      "skin_signed_distance_cm": 6.683996319770813,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Sidetail3.R",
+      "point": "head",
+      "skin_signed_distance_cm": 6.6651590168476105,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Sidetail3.R",
+      "point": "tail",
+      "skin_signed_distance_cm": 6.351902335882187,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Sidetail4.R",
+      "point": "head",
+      "skin_signed_distance_cm": 6.350620090961456,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Sidetail4.R",
+      "point": "tail",
+      "skin_signed_distance_cm": 6.9969892501831055,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Sidetail5.R",
+      "point": "head",
+      "skin_signed_distance_cm": 6.9951944053173065,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Sidetail5.R",
+      "point": "tail",
+      "skin_signed_distance_cm": 8.140808343887329,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Sidetail6.R",
+      "point": "head",
+      "skin_signed_distance_cm": 8.129223436117172,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Sidetail6.R",
+      "point": "tail",
+      "skin_signed_distance_cm": 7.721541076898575,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Sidehair3.R",
+      "point": "head",
+      "skin_signed_distance_cm": -0.46162987127900124,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Sidehair3.R",
+      "point": "tail",
+      "skin_signed_distance_cm": -1.8040962517261505,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Sidehair4.R",
+      "point": "head",
+      "skin_signed_distance_cm": -1.8938511610031128,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Sidehair4.R",
+      "point": "tail",
+      "skin_signed_distance_cm": -3.390522673726082,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Sidehair5.R",
+      "point": "head",
+      "skin_signed_distance_cm": -3.3836353570222855,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Sidehair5.R",
+      "point": "tail",
+      "skin_signed_distance_cm": -5.763483047485352,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Sidehair6.R",
+      "point": "head",
+      "skin_signed_distance_cm": -5.766767635941505,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Sidehair6.R",
+      "point": "tail",
+      "skin_signed_distance_cm": -5.179938301444054,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Sidehair7.R",
+      "point": "head",
+      "skin_signed_distance_cm": -5.1945991814136505,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Sidehair7.R",
+      "point": "tail",
+      "skin_signed_distance_cm": -4.817517101764679,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair_in3-1.L",
+      "point": "head",
+      "skin_signed_distance_cm": 2.7369340881705284,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair_in3-1.L",
+      "point": "tail",
+      "skin_signed_distance_cm": 6.605307757854462,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair_in3-2.L",
+      "point": "head",
+      "skin_signed_distance_cm": 6.423006951808929,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair_in3-2.L",
+      "point": "tail",
+      "skin_signed_distance_cm": 4.666316509246826,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair_in3-3.L",
+      "point": "head",
+      "skin_signed_distance_cm": 4.665706679224968,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair_in3-3.L",
+      "point": "tail",
+      "skin_signed_distance_cm": 4.504213854670525,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair_in3-4.L",
+      "point": "head",
+      "skin_signed_distance_cm": 4.508066549897194,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair_in3-4.L",
+      "point": "tail",
+      "skin_signed_distance_cm": 3.5519052296876907,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair_in3-5.L",
+      "point": "head",
+      "skin_signed_distance_cm": 3.5552307963371277,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair_in3-5.L",
+      "point": "tail",
+      "skin_signed_distance_cm": 2.2375186905264854,
+      "projection_cm": 0.01248057641837205,
+      "vertical_projection_cm": 0.007355213165283203
+    },
+    {
+      "bone": "Hair_in3-6.L",
+      "point": "head",
+      "skin_signed_distance_cm": 2.274268865585327,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair_in3-6.L",
+      "point": "tail",
+      "skin_signed_distance_cm": 1.8525678664445877,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair_in1-1.R",
+      "point": "head",
+      "skin_signed_distance_cm": 1.9570473581552505,
+      "projection_cm": 0.29849005471389484,
+      "vertical_projection_cm": -0.16596317291259766
+    },
+    {
+      "bone": "Hair_in1-1.R",
+      "point": "tail",
+      "skin_signed_distance_cm": 5.858069285750389,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair_in1-2.R",
+      "point": "head",
+      "skin_signed_distance_cm": 5.826017260551453,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair_in1-2.R",
+      "point": "tail",
+      "skin_signed_distance_cm": 5.739132314920425,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair_in1-3.R",
+      "point": "head",
+      "skin_signed_distance_cm": 5.7358067482709885,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair_in1-3.R",
+      "point": "tail",
+      "skin_signed_distance_cm": 7.75560736656189,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair_in1-4.R",
+      "point": "head",
+      "skin_signed_distance_cm": 7.746066153049469,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair_in1-4.R",
+      "point": "tail",
+      "skin_signed_distance_cm": 8.85370820760727,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair_in1-5.R",
+      "point": "head",
+      "skin_signed_distance_cm": 8.855997025966644,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair_in1-5.R",
+      "point": "tail",
+      "skin_signed_distance_cm": 5.677037686109543,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair_in1-6.R",
+      "point": "head",
+      "skin_signed_distance_cm": 5.7098038494586945,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair_in1-6.R",
+      "point": "tail",
+      "skin_signed_distance_cm": 4.7209762036800385,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair_in3-1.R",
+      "point": "head",
+      "skin_signed_distance_cm": 2.1831300109624863,
+      "projection_cm": 0.06687202036520841,
+      "vertical_projection_cm": -0.028765201568603516
+    },
+    {
+      "bone": "Hair_in3-1.R",
+      "point": "tail",
+      "skin_signed_distance_cm": 6.03814423084259,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair_in3-2.R",
+      "point": "head",
+      "skin_signed_distance_cm": 6.00193552672863,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair_in3-2.R",
+      "point": "tail",
+      "skin_signed_distance_cm": 6.356579065322876,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair_in3-3.R",
+      "point": "head",
+      "skin_signed_distance_cm": 6.350172311067581,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair_in3-3.R",
+      "point": "tail",
+      "skin_signed_distance_cm": 8.428329229354858,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair_in3-4.R",
+      "point": "head",
+      "skin_signed_distance_cm": 8.418438583612442,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair_in3-4.R",
+      "point": "tail",
+      "skin_signed_distance_cm": 10.04207581281662,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair_in3-5.R",
+      "point": "head",
+      "skin_signed_distance_cm": 10.04003956913948,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair_in3-5.R",
+      "point": "tail",
+      "skin_signed_distance_cm": 8.366081863641739,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair_in3-6.R",
+      "point": "head",
+      "skin_signed_distance_cm": 8.412215858697891,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair_in3-6.R",
+      "point": "tail",
+      "skin_signed_distance_cm": 7.016795873641968,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair_in2-1.R",
+      "point": "head",
+      "skin_signed_distance_cm": 1.87192652374506,
+      "projection_cm": 0.5000432723910896,
+      "vertical_projection_cm": -0.45963525772094727
+    },
+    {
+      "bone": "Hair_in2-1.R",
+      "point": "tail",
+      "skin_signed_distance_cm": 5.855131149291992,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair_in2-2.R",
+      "point": "head",
+      "skin_signed_distance_cm": 5.830829590559006,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair_in2-2.R",
+      "point": "tail",
+      "skin_signed_distance_cm": 6.045406311750412,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair_in2-3.R",
+      "point": "head",
+      "skin_signed_distance_cm": 6.041933596134186,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair_in2-3.R",
+      "point": "tail",
+      "skin_signed_distance_cm": 8.340616524219513,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair_in2-4.R",
+      "point": "head",
+      "skin_signed_distance_cm": 8.329755812883377,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair_in2-4.R",
+      "point": "tail",
+      "skin_signed_distance_cm": 9.860341250896454,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair_in2-5.R",
+      "point": "head",
+      "skin_signed_distance_cm": 9.859248995780945,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair_in2-5.R",
+      "point": "tail",
+      "skin_signed_distance_cm": 8.188363909721375,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair_in2-6.R",
+      "point": "head",
+      "skin_signed_distance_cm": 8.21409523487091,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair_in2-6.R",
+      "point": "tail",
+      "skin_signed_distance_cm": 7.344014197587967,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Amikomi3",
+      "point": "head",
+      "skin_signed_distance_cm": 1.802973821759224,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Amikomi3",
+      "point": "tail",
+      "skin_signed_distance_cm": 2.1726975217461586,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Amikomi4",
+      "point": "head",
+      "skin_signed_distance_cm": 2.191442996263504,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Amikomi4",
+      "point": "tail",
+      "skin_signed_distance_cm": 2.3192688822746277,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Amikomi5",
+      "point": "head",
+      "skin_signed_distance_cm": 2.318314090371132,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Amikomi5",
+      "point": "tail",
+      "skin_signed_distance_cm": 2.8163159266114235,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Amikomi6",
+      "point": "head",
+      "skin_signed_distance_cm": 2.8010714799165726,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Amikomi6",
+      "point": "tail",
+      "skin_signed_distance_cm": 2.9568886384367943,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair3-1.R",
+      "point": "head",
+      "skin_signed_distance_cm": 7.431488484144211,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair3-1.R",
+      "point": "tail",
+      "skin_signed_distance_cm": 10.536319017410278,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair3-2.R",
+      "point": "head",
+      "skin_signed_distance_cm": 10.548549890518188,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair3-2.R",
+      "point": "tail",
+      "skin_signed_distance_cm": 12.371614575386047,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair3-3.R",
+      "point": "head",
+      "skin_signed_distance_cm": 12.36005648970604,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair3-3.R",
+      "point": "tail",
+      "skin_signed_distance_cm": 15.359567105770111,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair3-4.R",
+      "point": "head",
+      "skin_signed_distance_cm": 15.343314409255981,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair3-4.R",
+      "point": "tail",
+      "skin_signed_distance_cm": 10.383260250091553,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair3-5.R",
+      "point": "head",
+      "skin_signed_distance_cm": 10.407231003046036,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair3-5.R",
+      "point": "tail",
+      "skin_signed_distance_cm": 4.989756271243095,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair3-6.R",
+      "point": "head",
+      "skin_signed_distance_cm": 5.055361241102219,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair3-6.R",
+      "point": "tail",
+      "skin_signed_distance_cm": 3.6221466958522797,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair3-1.L",
+      "point": "head",
+      "skin_signed_distance_cm": 7.467187941074371,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair3-1.L",
+      "point": "tail",
+      "skin_signed_distance_cm": 9.089620411396027,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair3-2.L",
+      "point": "head",
+      "skin_signed_distance_cm": 9.053334593772888,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair3-2.L",
+      "point": "tail",
+      "skin_signed_distance_cm": 9.505978226661682,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair3-3.L",
+      "point": "head",
+      "skin_signed_distance_cm": 9.505073726177216,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair3-3.L",
+      "point": "tail",
+      "skin_signed_distance_cm": 9.312377125024796,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair3-4.L",
+      "point": "head",
+      "skin_signed_distance_cm": 9.311196208000183,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair3-4.L",
+      "point": "tail",
+      "skin_signed_distance_cm": 7.659494131803513,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair3-5.L",
+      "point": "head",
+      "skin_signed_distance_cm": 7.670966535806656,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair3-5.L",
+      "point": "tail",
+      "skin_signed_distance_cm": 5.6800805032253265,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair3-6.L",
+      "point": "head",
+      "skin_signed_distance_cm": 5.710874125361443,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair3-6.L",
+      "point": "tail",
+      "skin_signed_distance_cm": 4.935432970523834,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Sidehair3.L",
+      "point": "head",
+      "skin_signed_distance_cm": 2.814578264951706,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Sidehair3.L",
+      "point": "tail",
+      "skin_signed_distance_cm": 2.1595364436507225,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Sidehair4.L",
+      "point": "head",
+      "skin_signed_distance_cm": 2.1833015605807304,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Sidehair4.L",
+      "point": "tail",
+      "skin_signed_distance_cm": 1.9767286255955696,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Sidehair5.L",
+      "point": "head",
+      "skin_signed_distance_cm": 1.9845038652420044,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Sidehair5.L",
+      "point": "tail",
+      "skin_signed_distance_cm": 3.038608841598034,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Sidehair6.L",
+      "point": "head",
+      "skin_signed_distance_cm": 3.051138110458851,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Sidehair6.L",
+      "point": "tail",
+      "skin_signed_distance_cm": 3.5404805094003677,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Sidehair7.L",
+      "point": "head",
+      "skin_signed_distance_cm": 3.5293348133563995,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Sidehair7.L",
+      "point": "tail",
+      "skin_signed_distance_cm": 3.4090418368577957,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "FrontHair5-3.L",
+      "point": "head",
+      "skin_signed_distance_cm": 1.1396580375730991,
+      "projection_cm": 0.78396276729948,
+      "vertical_projection_cm": 0.006473064422607422
+    },
+    {
+      "bone": "FrontHair5-3.L",
+      "point": "tail",
+      "skin_signed_distance_cm": 1.604984700679779,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair_in2-1.L",
+      "point": "head",
+      "skin_signed_distance_cm": 2.160164527595043,
+      "projection_cm": 0.3381541532551276,
+      "vertical_projection_cm": -0.315248966217041
+    },
+    {
+      "bone": "Hair_in2-1.L",
+      "point": "tail",
+      "skin_signed_distance_cm": 6.302301585674286,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair_in2-2.L",
+      "point": "head",
+      "skin_signed_distance_cm": 6.198133155703545,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair_in2-2.L",
+      "point": "tail",
+      "skin_signed_distance_cm": 5.184512957930565,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair_in2-3.L",
+      "point": "head",
+      "skin_signed_distance_cm": 5.1836129277944565,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair_in2-3.L",
+      "point": "tail",
+      "skin_signed_distance_cm": 4.917789995670319,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair_in2-4.L",
+      "point": "head",
+      "skin_signed_distance_cm": 4.920808598399162,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair_in2-4.L",
+      "point": "tail",
+      "skin_signed_distance_cm": 4.161899536848068,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair_in2-5.L",
+      "point": "head",
+      "skin_signed_distance_cm": 4.171701520681381,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair_in2-5.L",
+      "point": "tail",
+      "skin_signed_distance_cm": 2.200103737413883,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair_in2-6.L",
+      "point": "head",
+      "skin_signed_distance_cm": 2.261686697602272,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Hair_in2-6.L",
+      "point": "tail",
+      "skin_signed_distance_cm": 2.0739655941724777,
+      "projection_cm": 0.9798150361867968,
+      "vertical_projection_cm": -0.16019344329833984
+    }
+  ],
+  "max_projection_cm": 0.9821359234936289,
+  "maximum_bone_point_depth_cm": 5.766767635941505,
+  "stationary_point_test_only": true,
+  "actual_integrator_state_not_reconstructed": true,
+  "sidehair": [
+    {
+      "bone": "Sidehair3.R",
+      "point": "head",
+      "skin_signed_distance_cm": -0.46162987127900124,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Sidehair3.R",
+      "point": "tail",
+      "skin_signed_distance_cm": -1.8040962517261505,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Sidehair4.R",
+      "point": "head",
+      "skin_signed_distance_cm": -1.8938511610031128,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Sidehair4.R",
+      "point": "tail",
+      "skin_signed_distance_cm": -3.390522673726082,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Sidehair5.R",
+      "point": "head",
+      "skin_signed_distance_cm": -3.3836353570222855,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Sidehair5.R",
+      "point": "tail",
+      "skin_signed_distance_cm": -5.763483047485352,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Sidehair6.R",
+      "point": "head",
+      "skin_signed_distance_cm": -5.766767635941505,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Sidehair6.R",
+      "point": "tail",
+      "skin_signed_distance_cm": -5.179938301444054,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Sidehair7.R",
+      "point": "head",
+      "skin_signed_distance_cm": -5.1945991814136505,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Sidehair7.R",
+      "point": "tail",
+      "skin_signed_distance_cm": -4.817517101764679,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Sidehair3.L",
+      "point": "head",
+      "skin_signed_distance_cm": 2.814578264951706,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Sidehair3.L",
+      "point": "tail",
+      "skin_signed_distance_cm": 2.1595364436507225,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Sidehair4.L",
+      "point": "head",
+      "skin_signed_distance_cm": 2.1833015605807304,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Sidehair4.L",
+      "point": "tail",
+      "skin_signed_distance_cm": 1.9767286255955696,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Sidehair5.L",
+      "point": "head",
+      "skin_signed_distance_cm": 1.9845038652420044,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Sidehair5.L",
+      "point": "tail",
+      "skin_signed_distance_cm": 3.038608841598034,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Sidehair6.L",
+      "point": "head",
+      "skin_signed_distance_cm": 3.051138110458851,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Sidehair6.L",
+      "point": "tail",
+      "skin_signed_distance_cm": 3.5404805094003677,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Sidehair7.L",
+      "point": "head",
+      "skin_signed_distance_cm": 3.5293348133563995,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    },
+    {
+      "bone": "Sidehair7.L",
+      "point": "tail",
+      "skin_signed_distance_cm": 3.4090418368577957,
+      "projection_cm": 0.0,
+      "vertical_projection_cm": 0.0
+    }
+  ],
+  "mesh_matches_animated_skin": true,
+  "inside_points_are_ignored_by_backface_policy": true,
+  "simulation_started": false,
+  "geometry_changed": false,
+  "solver_modified": false
+}

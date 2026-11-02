@@ -1,8 +1,28 @@
 # MMD 成品模型拆衣与固定素体自动换装
 
+> **当前交接（2026-11-02）：** 服装流程暂停，当前优先完整角色的头发惯性与防穿模。Astra新窗口先读[最新交接](docs/HANDOFF_ASTRA_HAIR_CONTACT_2026-11-02.md)。用户认可的无碰撞7.5–15秒视频已完成；防穿模候选尚未通过5cm深度门槛，PR47另复现浅穿越漏检。历史模块和试验保留，不代表当前任务已验收。大模型、工程、媒体、缓存、依赖和生成安装包保留本机，Git备份文档与轻量源码。
+
 从来源角色的 PMX 里自动拆出衣服，适配到固定的素体骨架上，导出可以直接丢进 MMD 使用的 PMX。
 
 进度与已知问题见 [`progress.md`](progress.md)，需求与实施顺序见 [`plan.md`](plan.md)。
+
+## 动画接触工具（独立实验插件，2026-10-28）
+
+最新插件 `dist/animation_contact_tools-0.1.5.zip`：[实际发片接触修正](docs/FINITE_WIDTH_HAIR_2026-10-29.md)把原生动力学与原皮肤代理、PBD 保形／接触／时间连续性约束接起来。这一束完整 15 秒的 3,593 个八分之一帧采样无交线和超限拉伸，本轮未新增改人物动作。仅该束对身体通过离散验收，其他头发、自碰、CCD 和完整身体仍未解决。前阶段[碰撞壳误焊修复](docs/HAIR_FULL_RUN_2026-10-29.md)及其失败候选保留作对照。
+
+独立插件与 `skills/repair-animation-contact/` 支持显式骨架／表面映射、真实蒙皮检测、原 Action 保留的普通上肢修正层，以及子帧复查。独立英文骨架、厘米单位、技能打包后台运行已实测。当前真实 MMD 仍有进入抱手保护段的过渡残留、髋部穿插和头发问题，**不是完整无穿模系统**。[前阶段头发测试](docs/HAIR_CONTACT_TESTS_2026-10-28.md)修复了物理世界成员缺失与过滤错误；旧空世界物理对照作废。最新原生曲线与单束结果见上方记录。安装入口、算法、实测与限制见 [可迁移接触记录](docs/TRANSFERABLE_CONTACT_2026-10-28.md) 和 [技能](skills/repair-animation-contact/SKILL.md)。
+
+## Blender 插件（0.9 实验版）
+
+v0.2 的 `anatomical_foot_last` 明显破坏原鞋型，现已拒绝执行旧配置。0.3 改为原鞋等比变换、鞋口限定的脚面遮蔽及目标踝骨单骨绑定，Blend 保留脚部副本。这适用于本机刻晴的闭口硬底鞋，不支持凉鞋、脚趾弯折或自动裸足切换；[调查与实测](docs/SHOE_FITTING_RESEARCH_2026-10-23.md) 记录依据和限制。
+
+**MMD Outfit Bridge**：Blender 侧栏、Python API 与 JSON/CLI 共用独立后台服务，支持绑定输入的可复用配置、目标旧衣物排除、胸衣连续变形、目标表面手套/袜层重建、闭口鞋保形适配、PMX 重导入检查与 VMD 检查。
+
+0.9 增加默认关闭的试验袖口物理：识别两侧完整袖片，为原先只随手臂运动的袖口增加粒子骨、刚体、关节和权重过渡。继承 0.8 的袖片方向修正、闭口硬鞋形态键锁定、平地接地动作和手套覆盖。安装、使用与限制见 [`addon/README.md`](addon/README.md)。用 `python scripts/build_outfit_addon.py` 生成 `dist/mmd_outfit_bridge-0.9.0.zip`。需要已安装 MMD Tools；不包含第三方模型。
+
+本版仍需视觉验收，`REVIEW_REQUIRED` 不等于无穿模。它复用已有适配流程，并开始将对模型的现场操作要求转成可复用配置。
+
+供其他 AI 模型执行的固定流程见 [`docs/OUTFIT_AGENT_WORKFLOW.md`](docs/OUTFIT_AGENT_WORKFLOW.md)。袖口物理见 [`docs/OUTFIT_V09_2026-10-24.md`](docs/OUTFIT_V09_2026-10-24.md)，[B 站研究记录](docs/SLEEVE_RIBBON_BILIBILI_2026-10-24.md) 说明依据。袖片静止适配见 0.8、鞋型与接地见 0.7、手套覆盖及备份见 0.6。历史记录保留作对照。
 
 ## 环境要求
 

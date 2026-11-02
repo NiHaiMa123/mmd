@@ -1,0 +1,20 @@
+{
+  "status": "HEADERS_AND_LENGTHS_VALID",
+  "caches": [
+    {
+      "path": "E:\\project\\mmd\\work\\headswap_xl_codex\\jiggle_pr47_mesh_20261102\\candidate01\\cache\\animated_body_collider.pc2",
+      "points": 25451,
+      "samples": 1797
+    },
+    {
+      "path": "E:\\project\\mmd\\work\\headswap_xl_codex\\jiggle_pr47_mesh_20261102\\candidate01\\cache\\HairContact_MeasuredPoints_005_86d13690705d_joint_L.pc2",
+      "points": 1392,
+      "samples": 829
+    },
+    {
+      "path": "E:\\project\\mmd\\work\\headswap_xl_codex\\jiggle_pr47_mesh_20261102\\candidate01\\cache\\HairContact_MeasuredPoints_006_f04a19236428_joint_R.pc2",
+      "points": 1392,
+      "samples": 829
+    }
+  ]
+}

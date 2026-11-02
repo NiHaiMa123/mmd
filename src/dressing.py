@@ -62,8 +62,18 @@ def build_rig_map(src_arm: bpy.types.Object, tgt_arm: bpy.types.Object,
 
     mapping = {n: n for n in src_names if n in tgt_names}
     garment = [n for n in src_names if n not in tgt_names]
-    dropped = [n for n in garment if n not in used_bones]
-    keep = [n for n in garment if n in used_bones]
+    # A helper can carry no vertex weights and still be an essential link in
+    # a weighted child's parent chain. Dropping it roots that child in world
+    # space, stretching the skirt when the character translates in a VMD.
+    source = {bone.name: bone for bone in src_arm.data.bones}
+    needed = set()
+    for name in used_bones:
+        bone = source.get(name)
+        while bone is not None and bone.name not in mapping and bone.name not in needed:
+            needed.add(bone.name)
+            bone = bone.parent
+    dropped = [n for n in garment if n not in needed]
+    keep = [n for n in garment if n in needed]
 
     return {
         "mapping": mapping,
@@ -223,6 +233,8 @@ def add_bones(tgt_arm: bpy.types.Object, specs: list[dict[str, Any]]) -> list[st
             if parent is not None:
                 eb.parent = parent
                 eb.use_connect = False
+            else:
+                raise ValueError(f"Missing parent {spec['parent']} for garment bone {spec['name']}")
     finally:
         bpy.ops.object.mode_set(mode='OBJECT')
     return [s["name"] for s in specs]
@@ -2773,9 +2785,9 @@ def _load_config(path: str | None) -> dict:
         return cfg
     p = Path(path)
     if not p.exists():
-        return cfg
+        raise FileNotFoundError(f"Configuration not found: {p}")
     user = json.loads(p.read_text(encoding="utf-8"))
-    for key in ("fit", "body_mask", "motion"):
+    for key in ("fit", "body_mask", "motion", "physics"):
         if key in user and isinstance(user[key], dict):
             cfg[key].update(user[key])
     return cfg
@@ -2791,11 +2803,16 @@ def _armature_of(objects: list[bpy.types.Object]) -> bpy.types.Object | None:
 def run(src_objs: list[bpy.types.Object], tgt_objs: list[bpy.types.Object],
         out_dir: str, config_path: str | None = None,
         selection: dict[str, Any] | None = None,
-        stages: bool = False) -> dict[str, Any]:
+        stages: bool = False, progress=None, fit_backend=None, rest_backend=None, physics_backend=None) -> dict[str, Any]:
     """Full pipeline: extract -> retarget -> fit -> mask -> export."""
     from . import extraction, garment as garment_mod, import_export as ie
 
     cfg = _load_config(config_path)
+    def notify(stage):
+        if progress:
+            progress(stage)
+
+    notify("extract")
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
 
@@ -2858,12 +2875,15 @@ def run(src_objs: list[bpy.types.Object], tgt_objs: list[bpy.types.Object],
                                                               0.003))
     mask_stats["source_covered_faces"] = sum(1 for v in coverage.values() if v)
 
+    notify("rig_map")
     # ---- P1-03: rig map + rest pose deltas ----
     rig_map = build_rig_map(src_arm, tgt_arm, used_bones)
     deltas = rest_deltas(src_arm, tgt_arm, rig_map["mapping"])
     g_deltas = garment_deltas(src_arm, rig_map["garment_bones"], deltas)
     all_deltas = dict(deltas)
     all_deltas.update(g_deltas)
+    if rest_backend is not None:
+        rest_backend(src_arm, tgt_arm, all_deltas)
 
     specs = garment_bone_specs(src_arm, rig_map["garment_bones"], all_deltas)
     created = add_bones(tgt_arm, specs)
@@ -2901,6 +2921,7 @@ def run(src_objs: list[bpy.types.Object], tgt_objs: list[bpy.types.Object],
         c.matrix_parent_inverse = tgt_arm.matrix_world.inverted()
 
     snapshot("stage2_reskinned")
+    notify("fit")
 
     # ---- the shoe has to be dense enough to wrap the base body's toes ----
     shoe_stats: dict[str, Any] = {}
@@ -3013,6 +3034,8 @@ def run(src_objs: list[bpy.types.Object], tgt_objs: list[bpy.types.Object],
         limb_stats = fit_limb_ends(cloth[0], tgt_body_meshes[0], tgt_arm, tgt_bvh,
                                     max_reach=cfg["fit"].get("limb_reach", 0.14))
 
+    if fit_backend is not None:
+        fit_stats["external_backend"] = fit_backend(cloth, tgt_body_meshes)
     snapshot("stage3_fitted")
 
     # ---- P2: high risk pose suite, before the body gets holes ----
@@ -3053,6 +3076,7 @@ def run(src_objs: list[bpy.types.Object], tgt_objs: list[bpy.types.Object],
         }
         snapshot("stage3b_motion")
 
+    notify("mask")
     # ---- P1-06: hide the covered body ----
     if cfg["body_mask"]["enabled"] and cloth:
         garment_bvh = build_bvh(cloth[0])
@@ -3126,6 +3150,7 @@ def run(src_objs: list[bpy.types.Object], tgt_objs: list[bpy.types.Object],
 
     snapshot("stage4_masked")
 
+    notify("physics")
     # ---- P3-02: migrate the outfit physics ----
     physics_stats: dict[str, Any] = {"enabled": cfg["physics"]["enabled"]}
     if cfg["physics"]["enabled"] and cloth:
@@ -3137,6 +3162,12 @@ def run(src_objs: list[bpy.types.Object], tgt_objs: list[bpy.types.Object],
     else:
         physics_stats["enabled"] = False
 
+    if physics_backend is not None:
+        generated = physics_backend(cloth, tgt_arm)
+        physics_stats['generated'] = generated
+        created.extend(generated.get('created_bones', []))
+
+    notify("export")
     # ---- P1-07: export ----
     # the source model must not end up in the exported file
     for o in list(src_objs):

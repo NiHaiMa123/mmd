@@ -1,0 +1,51 @@
+{
+  "status": "UPSTREAM_NO_CONTACT_CONSTRAINT_BRANCH_DIFFERENCE_CONFIRMED",
+  "plugin": "E:\\project\\mmd\\work\\headswap_xl_codex\\jiggle_physics_20261031\\vendor\\blender-jiggle-physics-792db09a22cd5c7dc5b5c1b4eb0ea12c4af3e6b1\\__init__.py",
+  "plugin_sha256": "1bd2c0ad34e4f4b83b8c04abd6294ad9e7ca9ad66cbc068fab7e71785e3b61aa",
+  "source_branch": [
+    {
+      "line": 602,
+      "text": "if not self.needs_collision or self.parent.jiggle_settings.angle_elasticity == 1 and self.parent.jiggle_settings.length_elasticity == 1:"
+    }
+  ],
+  "source_identical": true,
+  "bone_parameters_identical": true,
+  "first_actual_native_collision_projection_frame": 233,
+  "no_projection_including_preroll_at_frame1": true,
+  "first_frame_display_tip_difference_cm": [
+    0.2931410074234009,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.5809224843978882,
+    0.6451319456100464,
+    0.5924522876739502,
+    0.9040225148200989,
+    0.5608803629875183,
+    0.9390796422958374,
+    0.5624205470085144,
+    1.0882807970046997,
+    0.6050549745559692,
+    1.9703965187072754,
+    0.5593141317367554,
+    0.7001733183860779,
+    0.531664252281189,
+    1.052584171295166,
+    0.5431380867958069,
+    1.131063461303711,
+    1.8631376028060913,
+    1.974912405014038,
+    0.7182047963142395,
+    1.7806583642959595
+  ],
+  "short_hair_first_frame_tip_displacement_cm": [
+    1.8631376028060913,
+    1.974912405014038
+  ],
+  "explanation": "With a nonempty collider collection needs_collision is true even without contact. For angle_elasticity0.7 the upstream constrain() continues into the backward-constraint/child blending branch; without collider targets it returns after the forward constraint. This changes no-contact motion as well as adding collision projection.",
+  "simulation_started": false,
+  "solver_modified": false
+}

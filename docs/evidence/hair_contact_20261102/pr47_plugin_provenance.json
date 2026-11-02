@@ -1,0 +1,19 @@
+{
+  "repository": "Noisysundae/blender-jiggle-physics-ns",
+  "commit": "00a01ff31f8d4cea3c07efd5f030e3f15b93398a",
+  "base_commit": "792db09a22cd5c7dc5b5c1b4eb0ea12c4af3e6b1",
+  "pr_url": "https://github.com/naelstrof/blender-jiggle-physics/pull/47",
+  "pr_state": "open",
+  "pr_unmerged": true,
+  "github_blob_sha": "e65b6da85983481146dd9e633f3cb658bcf7d111",
+  "source_dir": "E:\\project\\mmd\\work\\headswap_xl_codex\\jiggle_pr47_mesh_20261102\\vendor\\Noisysundae_00a01ff31f8d",
+  "source_url": "https://github.com/Noisysundae/blender-jiggle-physics-ns/blob/00a01ff31f8d4cea3c07efd5f030e3f15b93398a/__init__.py",
+  "supplementary_files_copied_from_pinned_upstream_base": true,
+  "local_solver_edits": false,
+  "source_sha256": "1334a8b452745fc7201cf6c05d6982bfe0a33b2c67335420025b260cb16c2b57",
+  "github_blob_sha_verified": true,
+  "ast_changes_limited_to": [
+    "VirtualParticle.set_child",
+    "VirtualParticle.mesh_collide"
+  ]
+}

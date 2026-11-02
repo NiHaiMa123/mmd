@@ -4,9 +4,9 @@ Two levels:
 
   static  - inventory plus skinning sanity (unweighted vertices, bones that
             do not exist, weight sums that are off)
-  motion  - drive the rig with a VMD, sample frames and count the garment
-            vertices that ended up inside the body.  That is the cheapest
-            honest signal for "the body pokes through the clothes".
+  motion  - drive the rig with a VMD and detect body points whose local side
+            relative to the nearest garment changes. Texture-transparent
+            faces are excluded conservatively; raw counts remain available.
 
 A PMX model is a single mesh, so after an export the clothes and the body
 share one object - the split therefore happens on *faces*, by material.
@@ -360,6 +360,58 @@ def _region_candidates(body_me, bfaces: list[int], region_of: list[str],
     return totals, positive, nonpositive, missing
 
 
+def _edge_stretch(reference, vertices):
+    """Detect exploding clothes independently of body-through-cloth counts."""
+    large, severe, maximum, longest = 0, 0, 1., 0.
+    for a, b, original in reference:
+        length = (vertices[a].co - vertices[b].co).length
+        ratio = length / max(.001, original)
+        maximum = max(maximum, ratio)
+        longest = max(longest, length)
+        large += length > .10 and ratio > 4
+        severe += length > .25 and ratio > 8
+    return {"large_edges": large, "severe_edges": severe,
+            "max_ratio": maximum, "longest_edge": longest}
+
+
+class _ContactProbe:
+    """Compare raw and texture-visible candidates with their own rest references."""
+    def __init__(self, obj, faces, bme, gme, skin_faces, region_of, stride):
+        from . import motion, visibility
+        self.raw_faces=list(faces)
+        self.faces,self.visibility=visibility.visible_garment_faces(obj,faces)
+        if not self.faces:
+            raise ValueError('No visible garment candidates; contact is not measurable')
+        body_bvh=motion._bvh_from(bme,skin_faces)
+        self.reference=motion.rest_side_signs(body_bvh,motion._bvh_from(gme,self.faces),bme,skin_faces)
+        self.raw_reference=(motion.rest_side_signs(body_bvh,motion._bvh_from(gme,self.raw_faces),bme,skin_faces)
+                            if self.faces!=self.raw_faces else self.reference)
+        self.raw_candidates=_region_candidates(bme,skin_faces,region_of,self.raw_reference,stride)
+        self.raw_results=[]
+
+    def sample(self, bme, gme, skin_faces, stride, frame, region_of):
+        from . import motion
+        body_bvh=motion._bvh_from(bme,skin_faces)
+        result=motion._pierce_count(body_bvh,motion._bvh_from(gme,self.faces),bme,skin_faces,self.reference,stride=stride)
+        raw=(motion._pierce_count(body_bvh,motion._bvh_from(gme,self.raw_faces),bme,skin_faces,self.raw_reference,stride=stride)
+             if self.faces!=self.raw_faces else result)
+        regions={}
+        for i in raw[2]:
+            key=region_of[i] if i<len(region_of) else 'other'
+            regions[key]=regions.get(key,0)+1
+        self.raw_results.append({'frame':frame,'pierced':raw[0],'checked':raw[1],
+                                 'ratio':round(raw[0]/max(raw[1],1),5),'regions':regions})
+        return result
+
+    def report(self):
+        names=('candidates_by_region','reference_positive_by_region',
+               'reference_nonpositive_by_region','missing_reference_by_region')
+        return {'visibility_filter':self.visibility,'raw_geometry':{
+            'per_frame':self.raw_results,
+            'max_ratio':max((r['ratio'] for r in self.raw_results),default=0),
+            **dict(zip(names,self.raw_candidates))}}
+
+
 def motion_check(objects: list[bpy.types.Object], motions: str | None,
                  garment_materials: list[str] | None = None,
                  frame_step: int = 15, sample_stride: int = 3,
@@ -380,11 +432,9 @@ def motion_check(objects: list[bpy.types.Object], motions: str | None,
     split = split_faces(objects, garment_materials)
     gmesh = split["garment_mesh"]
     bmesh_obj = split["body_mesh"]
-    region_of: list[str] = []
-    for name in dressing.dominant_bones(bmesh_obj):
-        region_of.append(body_region(name))
     if gmesh is None or bmesh_obj is None:
         return {"skipped": "model has no garment/skin split"}
+    region_of = [body_region(name) for name in dressing.dominant_bones(bmesh_obj)]
     if not split["garment_faces"] or not split["skin_faces"]:
         return {"skipped": "model has no garment/skin split"}
 
@@ -401,15 +451,18 @@ def motion_check(objects: list[bpy.types.Object], motions: str | None,
         gme, gev = bme, bev
     else:
         gme, gev = _evaluated_mesh(gmesh)
-    rest_sign = motion_mod.rest_side_signs(
-        motion_mod._bvh_from(bme, split["skin_faces"]),
-        motion_mod._bvh_from(gme, split["garment_faces"]),
-        bme, split["skin_faces"])
+    probe = _ContactProbe(gmesh, split['garment_faces'], bme, gme,
+                          split['skin_faces'], region_of, sample_stride)
+    rest_sign = probe.reference
     # how many points every region puts into the test - the mesh is freed
     # right after, so this has to happen now
     (candidates, ref_positive, ref_nonpositive,
      ref_missing) = _region_candidates(
         bme, split["skin_faces"], region_of, rest_sign, sample_stride)
+    garment_vertices = {i for fi in split["garment_faces"] for i in gme.polygons[fi].vertices}
+    reference_edges = [(edge.vertices[0], edge.vertices[1],
+                        (gme.vertices[edge.vertices[0]].co - gme.vertices[edge.vertices[1]].co).length)
+                       for edge in gme.edges if all(i in garment_vertices for i in edge.vertices)]
     bev.to_mesh_clear()
     if gev is not bev:
         gev.to_mesh_clear()
@@ -431,10 +484,8 @@ def motion_check(objects: list[bpy.types.Object], motions: str | None,
             gme, gev = bme, bev
         else:
             gme, gev = _evaluated_mesh(gmesh)
-        pierced, checked, hits = motion_mod._pierce_count(
-            motion_mod._bvh_from(bme, split["skin_faces"]),
-            motion_mod._bvh_from(gme, split["garment_faces"]),
-            bme, split["skin_faces"], rest_sign, stride=sample_stride)
+        pierced, checked, hits = probe.sample(bme, gme, split['skin_faces'], sample_stride, f, region_of)
+        deformation = _edge_stretch(reference_edges, gme.vertices)
         bev.to_mesh_clear()
         if gev is not bev:
             gev.to_mesh_clear()
@@ -444,7 +495,7 @@ def motion_check(objects: list[bpy.types.Object], motions: str | None,
             per_region[key] = per_region.get(key, 0) + 1
         results.append({"frame": f, "pierced": pierced, "checked": checked,
                         "ratio": round(pierced / max(checked, 1), 5),
-                        "regions": per_region})
+                        "regions": per_region, "deformation": deformation})
     scene.frame_set(start)
     results.sort(key=lambda r: -r["ratio"])
     worst = results[0] if results else {}
@@ -453,6 +504,11 @@ def motion_check(objects: list[bpy.types.Object], motions: str | None,
         for key, n in r.get("regions", {}).items():
             totals[key] = totals.get(key, 0) + n
     return {
+        **probe.report(),
+        "deformation": {"max_severe_edges": max((r["deformation"]["severe_edges"] for r in results), default=0),
+                        "max_large_edges": max((r["deformation"]["large_edges"] for r in results), default=0),
+                        "max_edge_ratio": max((r["deformation"]["max_ratio"] for r in results), default=1),
+                        "thresholds": {"large_length": .10, "large_ratio": 4, "severe_length": .25, "severe_ratio": 8}},
         "pierced_by_region": dict(sorted(totals.items(),
                                          key=lambda kv: -kv[1])),
         "candidates_by_region": dict(sorted(candidates.items(),
@@ -482,16 +538,15 @@ def physics_motion_check(objects: list[bpy.types.Object], motions: str,
                          break_collision: bool = False,
                          outfit_groups: list[int] | None = None
                          ) -> dict[str, Any]:
-    """Count the body points that pierce the clothes *with* the physics on.
+    """Measure a continuously stepped MMD Tools Blender physics rig.
 
-    The normal motion check only evaluates the rig, so it measures the
-    clipping of a model whose physics never runs.  This one maps the MMD
-    collision groups onto Blender's rigid body world, lets Bullet run and
-    writes the simulated motion back onto the bones, which is what MMD does.
+    The installed builder handles parenting and mode-1/mode-2 constraints.
+    Exact exclusions and pre-physics kinematic tracks avoid feedback cycles.
+    Secondary-physics feedback into those tracks is omitted, so this is not
+    native MMD dynamics acceptance.
 
-    `break_collision` switches the outfit off the base body's limbs again -
-    that is the state before the collision groups were translated, and it
-    makes the two runs comparable.
+    `break_collision` excludes outfit/body groups before building the rig,
+    producing a separate diagnostic counterfactual.
     """
     from . import dressing, motion as motion_mod, physics_sim
 
@@ -518,17 +573,20 @@ def physics_motion_check(objects: list[bpy.types.Object], motions: str,
         return {"skipped": "garment/skin split is empty",
                 "garment_faces": len(split["garment_faces"]),
                 "skin_faces": len(split["skin_faces"])}
-    rest_sign = motion_mod.rest_side_signs(
-        motion_mod._bvh_from(bme, split["skin_faces"]),
-        motion_mod._bvh_from(gme, split["garment_faces"]),
-        bme, split["skin_faces"])
     dom = dressing.dominant_bones(bmesh_obj)
     # the same denominators as the plain motion check, so the two reports
     # can be read next to each other
     region_of = [body_region(name) for name in dom]
+    probe = _ContactProbe(gmesh, split['garment_faces'], bme, gme,
+                          split['skin_faces'], region_of, 3)
+    rest_sign = probe.reference
     (candidates, ref_positive, ref_nonpositive,
      ref_missing) = _region_candidates(
         bme, split["skin_faces"], region_of, rest_sign, 3)
+    garment_vertices = {i for fi in split['garment_faces'] for i in gme.polygons[fi].vertices}
+    reference_edges = [(e.vertices[0], e.vertices[1],
+                        (gme.vertices[e.vertices[0]].co-gme.vertices[e.vertices[1]].co).length)
+                       for e in gme.edges if all(i in garment_vertices for i in e.vertices)]
     bpy.data.meshes.remove(bme)
     if gme is not bme:
         bpy.data.meshes.remove(gme)
@@ -553,7 +611,7 @@ def physics_motion_check(objects: list[bpy.types.Object], motions: str,
     bpy.context.view_layer.update()
     rest_positions = {o.name: o.matrix_world.translation.copy()
                       for o in _rigids}
-    setup = physics_sim.setup(scene, arm, first_frame, last_frame,
+    setup = physics_sim.setup_native(scene, arm, first_frame, last_frame,
                               outfit_groups=set(outfit_groups or []),
                               break_outfit_body=break_collision)
     broken_info: dict[str, Any] = {}
@@ -595,7 +653,8 @@ def physics_motion_check(objects: list[bpy.types.Object], motions: str,
         if f not in sample:
             continue
         # where the bodies are in this frame
-        frame_positions = {o.name: o.matrix_world.translation.copy()
+        depsgraph = bpy.context.evaluated_depsgraph_get()
+        frame_positions = {o.name: o.evaluated_get(depsgraph).matrix_world.translation.copy()
                            for o in _rigids}
         near = _ps.contact_matrix_report(_rigids, positions=frame_positions,
                                          table=pair_table)
@@ -622,18 +681,16 @@ def physics_motion_check(objects: list[bpy.types.Object], motions: str,
             first_pos = snapshot
         if f == sample_hi:
             last_pos = snapshot
-        pierced, checked, hits = motion_mod._pierce_count(
-            motion_mod._bvh_from(bme, split["skin_faces"]),
-            motion_mod._bvh_from(gme, split["garment_faces"]),
-            bme, split["skin_faces"], rest_sign, stride=3)
+        pierced, checked, hits = probe.sample(bme, gme, split['skin_faces'], 3, f, region_of)
+        deformation = _edge_stretch(reference_edges, gme.vertices)
         # the garment inside the base body's collision shapes
         colliders = []
         for o in body_rigids:
-            bvh = _rigid_bvh(o)
+            bvh = _rigid_bvh(o.evaluated_get(depsgraph))
             if bvh:
                 colliders.append((o.mmd_rigid.bone or "?", *bvh))
         in_body, in_checked, in_by_bone = _cloth_inside_colliders(
-            gme, split["garment_faces"], colliders, world=gmesh.matrix_world)
+            gme, probe.faces, colliders, world=gmesh.matrix_world)
         in_leg = sum(n for bone, n in in_by_bone.items()
                      if body_region(bone) in ("leg", "foot"))
         bpy.data.meshes.remove(bme)
@@ -645,6 +702,7 @@ def physics_motion_check(objects: list[bpy.types.Object], motions: str,
             regions[key] = regions.get(key, 0) + 1
         results.append({"frame": f, "pierced": pierced, "checked": checked,
                         "ratio": round(pierced / max(checked, 1), 5),
+                        "deformation": deformation,
                         "regions": regions,
                         # the colliders are loose proxies: a garment inside one
                         # is a physics diagnosis, not a visible penetration
@@ -660,6 +718,7 @@ def physics_motion_check(objects: list[bpy.types.Object], motions: str,
     if first_pos and last_pos and len(first_pos) == len(last_pos):
         garment_motion = max((a - b).length for a, b in zip(first_pos, last_pos))
     return {
+        **probe.report(),
         "physics": True,
         "break_collision": break_collision,
         "broken": broken_info,
@@ -691,6 +750,8 @@ def physics_motion_check(objects: list[bpy.types.Object], motions: str,
         # above was measured on a model that stood still
         "garment_motion": round(garment_motion, 6),
         "no_motion": garment_motion < 1e-4,
+        "deformation": {'max_severe_edges': max((r['deformation']['severe_edges'] for r in results), default=0),
+                        'max_large_edges': max((r['deformation']['large_edges'] for r in results), default=0)},
     }
 
 
@@ -728,6 +789,11 @@ def run_qa(objects: list[bpy.types.Object], motions: str | None = None,
             "detail": f"max {motion['max_ratio'] * 100:.2f}% of sampled body "
                       f"points pierce through the clothes",
         })
+        deformation = motion.get("deformation", {})
+        if deformation:
+            severe, large = deformation["max_severe_edges"], deformation["max_large_edges"]
+            items.append({"check": "motion_deformation", "status": "FAILED" if severe else "WARNING" if large else "OK",
+                          "detail": f"max {severe} severely stretched and {large} large stretched garment edges"})
         if motion.get("no_motion"):
             # the evaluated geometry never changed: the numbers above were
             # measured on a model that stood still, so they mean nothing
@@ -737,6 +803,10 @@ def run_qa(objects: list[bpy.types.Object], motions: str | None = None,
                 "detail": "the evaluated model did not move - the measurement "
                           "has no data behind it",
             })
+        if physics:
+            mismatched = motion.get('dynamic_near_gap_false_positive_max', 0) + motion.get('dynamic_near_gap_false_negative_max', 0)
+            items.append({'check': 'physics_filter', 'status': 'WARNING' if mismatched else 'OK',
+                          'detail': f'{mismatched} nearby collision-filter mismatches; Blender physics is not native MMD acceptance'})
     else:
         items.append({"check": "motion", "status": "SKIPPED",
                       "detail": motion.get("skipped", motion.get("error", "?"))})

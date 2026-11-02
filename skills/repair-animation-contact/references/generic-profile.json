@@ -1,0 +1,63 @@
+{
+  "schema": 1,
+  "mesh": "GenericDemoSurface",
+  "armature": "GenericDemoRig",
+  "units_to_m": 1.0,
+  "bone_roles": {
+    "torso": [
+      "core"
+    ],
+    "head": [
+      "skull"
+    ],
+    "arm.L": [
+      "reachA",
+      "bendA"
+    ],
+    "hand.L": [
+      "palmA"
+    ]
+  },
+  "surface_attribute": "SurfaceClass",
+  "body_classes": [
+    1
+  ],
+  "head_classes": [
+    2
+  ],
+  "hair_classes": [
+    3
+  ],
+  "exclude_classes": [
+    0,
+    4,
+    5
+  ],
+  "pairs": [
+    [
+      "hand.L",
+      "head"
+    ]
+  ],
+  "protected_pairs": [],
+  "protected_windows": [],
+  "root_hair_anchor_bones": [
+    "skull"
+  ],
+  "clearance_m": 0.003,
+  "control_chains": [
+    [
+      "reachA",
+      "bendA",
+      "palmA"
+    ]
+  ],
+  "protected_bones": [
+    "core",
+    "skull",
+    "origin"
+  ],
+  "rotation_limit_degrees": 25,
+  "verification_step": 0.25,
+  "preserve_wrist_orientation": true
+}

@@ -1,0 +1,81 @@
+{
+  "snapshot_date": "2026-11-02",
+  "local_large_assets_included": false,
+  "files": [
+    {
+      "file": "accepted_video_report.json",
+      "source": "E:\\project\\mmd\\work\\headswap_xl_codex\\jiggle_root_point_dance_075_15_20261102\\preview\\video_report.json",
+      "bytes": 1445
+    },
+    {
+      "file": "accepted_bake_report.json",
+      "source": "E:\\project\\mmd\\work\\headswap_xl_codex\\jiggle_root_point_dance_075_15_20261102\\bake_report.json",
+      "bytes": 793
+    },
+    {
+      "file": "accepted_configuration.json",
+      "source": "E:\\project\\mmd\\work\\headswap_xl_codex\\jiggle_root_point_dance_075_15_20261102\\configuration.json",
+      "bytes": 57201
+    },
+    {
+      "file": "long_hair_root_policy.json",
+      "source": "E:\\project\\mmd\\work\\headswap_xl_codex\\jiggle_root_point_20261102\\long_hair_root_policy.json",
+      "bytes": 313
+    },
+    {
+      "file": "pr47_result.json",
+      "source": "E:\\project\\mmd\\work\\headswap_xl_codex\\jiggle_pr47_mesh_20261102\\result.json",
+      "bytes": 2025
+    },
+    {
+      "file": "pr47_plugin_provenance.json",
+      "source": "E:\\project\\mmd\\work\\headswap_xl_codex\\jiggle_pr47_mesh_20261102\\plugin_provenance.json",
+      "bytes": 956
+    },
+    {
+      "file": "pr47_function_probe.json",
+      "source": "E:\\project\\mmd\\work\\headswap_xl_codex\\jiggle_pr47_mesh_20261102\\function_probe.json",
+      "bytes": 1498
+    },
+    {
+      "file": "pr47_function_boundary_probe.json",
+      "source": "E:\\project\\mmd\\work\\headswap_xl_codex\\jiggle_pr47_mesh_20261102\\function_boundary_probe.json",
+      "bytes": 1772
+    },
+    {
+      "file": "pr47_worst_frame_contact_probe.json",
+      "source": "E:\\project\\mmd\\work\\headswap_xl_codex\\jiggle_pr47_mesh_20261102\\worst_frame_contact_probe.json",
+      "bytes": 51982
+    },
+    {
+      "file": "pr47_bake_report.json",
+      "source": "E:\\project\\mmd\\work\\headswap_xl_codex\\jiggle_pr47_mesh_20261102\\candidate01\\bake_report.json",
+      "bytes": 1983
+    },
+    {
+      "file": "pr47_setup_comparison.json",
+      "source": "E:\\project\\mmd\\work\\headswap_xl_codex\\jiggle_pr47_mesh_20261102\\candidate01\\setup_comparison.json",
+      "bytes": 202
+    },
+    {
+      "file": "pr47_cache_integrity.json",
+      "source": "E:\\project\\mmd\\work\\headswap_xl_codex\\jiggle_pr47_mesh_20261102\\candidate01\\cache_integrity.json",
+      "bytes": 710
+    },
+    {
+      "file": "upstream_constraint_branch_analysis.json",
+      "source": "E:\\project\\mmd\\work\\headswap_xl_codex\\jiggle_fitted_contact_20261102\\upstream_constraint_branch_analysis.json",
+      "bytes": 1879
+    },
+    {
+      "file": "bone_parent_result.json",
+      "source": "E:\\project\\mmd\\work\\headswap_xl_codex\\jiggle_bone_parent_contact_20261102\\result.json",
+      "bytes": 3036
+    },
+    {
+      "file": "upstream_review.json",
+      "source": "E:\\project\\mmd\\work\\headswap_xl_codex\\jiggle_bone_parent_contact_20261102\\upstream_review.json",
+      "bytes": 2065
+    }
+  ]
+}

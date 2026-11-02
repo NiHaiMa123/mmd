@@ -1,0 +1,10 @@
+"""Record the delivered scope and known defects of the cloth trial."""
+import json
+from pathlib import Path
+ROOT=Path(__file__).resolve().parents[1];out=ROOT/'outputs/cynical_cloth15/trial3'
+def read(name):return json.loads((out/name).read_text(encoding='utf-8'))
+sim=read('simulation_report.json');video=read('video_report.json');reload=read('cache_reload_report.json');setup=read('setup.json');stretch=read('stretch_details.json')
+report={'status':'PREVIEW_READY_REVIEW_REQUIRED','video':str(out/'Cynical_Cloth_15s_preview.mp4'),'blend':str(out/'Cynical_Cloth_15s.blend'),'cached_frames':[1,450],'cache_baked':sim['cache_baked'],'random_seek_matches_original':all(r['bounds_error_m']<1e-5 for r in reload['frames'].values()),'preview_seconds':float(video['format']['duration']),'preview_fps':15,'audio_present':any(s['codec_type']=='audio' for s in video['streams']),'clothes_solver':setup['cloth'],'plate_cleanup':{'removed_gusset_branch':setup['cleanup']['disconnected_gusset_branches'],'internal_faces_excluded_from_stockings':setup['cleanup']['internal_faces_excluded_from_nylon'],'body_faces_deleted':setup['cleanup']['body_faces_deleted']},'sampled_worst_edge_ratio':max(v['edge_ratio_max'] for v in sim['frames'].values()),'extension_p99_at_frame_270_m':stretch['270']['extension_p99_m'],'limits':['Local stretching and folds remain around rapid arm and crossover poses.','Hair and other secondary MMD rigid-body dynamics are outside this trial.','Native MMD/PMX export has not been validated.','640x360, 15-fps review clip, not a final-quality render.'],'ui_verified':'New Cynical_Cloth_15s Blender window verified with Computer Use; default MCP belongs to another unsaved project and was not modified.'}
+assert report['cache_baked'] and report['random_seek_matches_original'] and report['audio_present'] and report['preview_seconds']==15
+(out/'acceptance.json').write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
+print('PREVIEW_ACCEPTANCE_RECORDED',report['status'])

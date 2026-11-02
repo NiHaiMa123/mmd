@@ -129,6 +129,24 @@ def _fresh_groups(tgt_objects: list[bpy.types.Object],
     return out
 
 
+def translate_exclusions(source_mask, fresh_groups, body_group_map):
+    """mmd_tools booleans mean IGNORE, the inverse of the PMX file bits.
+
+    Unknown target groups stay excluded. Where several source body groups
+    merge into one target group, allow it if any mapped source group allowed it.
+    """
+    result = [True] * len(source_mask)
+    for source_group, target_group in fresh_groups.items():
+        result[target_group] = source_mask[source_group]
+    mapped = {}
+    for source_group, target_groups in body_group_map.items():
+        for target_group in target_groups:
+            mapped.setdefault(target_group, []).append(source_mask[source_group])
+    for group, exclusions in mapped.items():
+        result[group] = all(exclusions)
+    return result
+
+
 def migrate_physics(src_objects: list[bpy.types.Object],
                     tgt_objects: list[bpy.types.Object],
                     src_arm: bpy.types.Object, tgt_arm: bpy.types.Object,
@@ -178,18 +196,9 @@ def migrate_physics(src_objects: list[bpy.types.Object],
         if d is None:
             skipped.append(o.name)
             continue
-        # the mask is translated: a bit that pointed at a source body group
-        # now points at the target groups of the same bones
+        # True excludes a group in mmd_tools (not the raw PMX bit meaning).
         src_mask = list(o.mmd_rigid.collision_group_mask)
-        new_mask = [False] * len(src_mask)
-        for s, on in enumerate(src_mask):
-            if not on:
-                continue
-            if s in fresh:
-                new_mask[fresh[s]] = True
-            for t_g in group_map.get(s, ()):
-                if t_g < len(new_mask):
-                    new_mask[t_g] = True
+        new_mask = translate_exclusions(src_mask, fresh, group_map)
         new_group = fresh.get(o.mmd_rigid.collision_group_number,
                               o.mmd_rigid.collision_group_number)
         # A PMX rigid body is stored as an offset from the bone it follows, so
@@ -241,20 +250,13 @@ def migrate_physics(src_objects: list[bpy.types.Object],
             new.rigid_body.collision_margin = rb.collision_margin
         created[o.name] = new
 
-    # The base model's big limb colliders (the ones whose mask allows every
-    # group) are what the outfit has to hit.  刻晴's own skirt is configured
-    # with a mask of {6} - it never collided with the legs in the source
-    # model either - so copying the relationship is not enough, the
-    # relationship has to be added.
-    limb_groups: set[int] = set()
-    for _bone, (_g, _m, _o) in tgt_body_rb.items():
-        if all(_m):
-            limb_groups.add(_g)
-
-    # the target's body rigid bodies have to allow the outfit's groups the
-    # same way the source's body rigid bodies allowed them
+    # Translate the other side too, including False (allow). Updating only
+    # True entries would preserve target "ignore all" masks and disable legs.
     body_mask_fixes = 0
-    for bone, (_tg, _tm, obj) in tgt_body_rb.items():
+    for obj in tgt_objects:
+        if getattr(obj, 'mmd_type', 'NONE') != 'RIGID_BODY':
+            continue
+        bone = obj.mmd_rigid.bone
         twin = src_body_rb.get(bone)
         if twin is None:
             continue
@@ -262,28 +264,13 @@ def migrate_physics(src_objects: list[bpy.types.Object],
         mask = list(obj.mmd_rigid.collision_group_mask)
         changed = False
         for g in outfit_groups:
-            if g < len(src_mask) and src_mask[g]:
-                n = fresh[g]
-                if n < len(mask) and not mask[n]:
-                    mask[n] = True
-                    changed = True
+            n = fresh[g]
+            if n < len(mask) and mask[n] != src_mask[g]:
+                mask[n] = src_mask[g]
+                changed = True
         if changed:
             obj.mmd_rigid.collision_group_mask = mask
             body_mask_fixes += 1
-
-    # open the outfit up against the base body's limbs
-    opened = 0
-    for o in created.values():
-        rb = o.mmd_rigid
-        mask = list(rb.collision_group_mask)
-        changed = False
-        for g in limb_groups:
-            if g < len(mask) and not mask[g]:
-                mask[g] = True
-                changed = True
-        if changed:
-            rb.collision_group_mask = mask
-            opened += 1
 
     # the joints: re-point the endpoints
     def endpoint(name: str):
@@ -298,18 +285,20 @@ def migrate_physics(src_objects: list[bpy.types.Object],
 
     joints_created = 0
     joints_skipped = 0
+    joints_unrelated = 0
+    missing_endpoints = []
     for j in src_joints:
         rbc = j.rigid_body_constraint
         if rbc is None or rbc.object1 is None or rbc.object2 is None:
+            continue
+        if rbc.object1.name not in created and rbc.object2.name not in created:
+            joints_unrelated += 1
             continue
         o1 = endpoint(rbc.object1.name)
         o2 = endpoint(rbc.object2.name)
         if o1 is None or o2 is None:
             joints_skipped += 1
-            continue
-        # only the joints that belong to the outfit
-        if rbc.object1.name not in created and rbc.object2.name not in created:
-            joints_skipped += 1
+            missing_endpoints.append({'joint': j.name, 'endpoints': [rbc.object1.name, rbc.object2.name]})
             continue
 
         loc = j.matrix_world.translation
@@ -359,12 +348,13 @@ def migrate_physics(src_objects: list[bpy.types.Object],
     return {
         "rigid_bodies": len(created),
         "body_mask_fixes": body_mask_fixes,
-        "limb_groups": sorted(limb_groups),
-        "opened_to_limbs": opened,
+        "mask_semantics": "mmd_tools True=excluded; PMX True=allowed",
         "group_map": {str(k): sorted(v) for k, v in group_map.items()},
         "outfit_groups": {str(k): v for k, v in fresh.items()},
         "rigid_bodies_skipped": len(skipped),
         "joints": joints_created,
         "joints_skipped": joints_skipped,
+        "joints_unrelated": joints_unrelated,
+        "missing_joint_endpoints": missing_endpoints,
         "bones": sorted(garment_bones & set(deltas.keys()))[:10],
     }

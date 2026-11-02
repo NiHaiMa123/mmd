@@ -1,0 +1,16 @@
+"""Encode 450 freshly rendered native frames with the requested music; full decode."""
+import argparse,json,subprocess,hashlib,shutil
+from pathlib import Path
+from PIL import Image
+p=argparse.ArgumentParser();p.add_argument('--delivery',required=True);p.add_argument('--music',required=True);p.add_argument('--filename',default='完整角色_整头物理避碰_1080p_15s_Shikako.mp4');a=p.parse_args();out=Path(a.delivery);pub=json.loads((out/'cache_publication.json').read_text('utf8'));assert pub['status']=='COMPLETE_PHYSICAL_TRAJECTORY';qa=json.loads((out/'native_geometry_audit.json').read_text('utf8'));assert qa['status']=='NATIVE_BLENDER_FULL_HEAD_SAMPLED_BODY_CONTACT_ROOT_REPLAY_PASS' and set(range(1,451)).issubset(set(qa['frames']));manifest=[]
+for f in range(1,451):
+ path=out/'frames'/f'f{f:04d}.png';assert path.exists(),f
+ with Image.open(path) as im:assert im.size==(1920,1080);im.verify()
+ manifest.append(dict(frame=f,bytes=path.stat().st_size,sha256=hashlib.sha256(path.read_bytes()).hexdigest()))
+ffmpeg=shutil.which('ffmpeg');ffprobe=shutil.which('ffprobe');assert ffmpeg and ffprobe;video=out/a.filename;assert Path(a.filename).name==a.filename and video.suffix=='.mp4'
+with (out/'encode.log').open('w',encoding='utf8') as log:
+ subprocess.run([ffmpeg,'-hide_banner','-y','-framerate','30','-start_number','1','-i',str(out/'frames/f%04d.png'),'-ss','0.0666666667','-i',a.music,'-map','0:v:0','-map','1:a:0','-t','15','-c:v','libx264','-preset','medium','-crf','18','-pix_fmt','yuv420p','-r','30','-c:a','aac','-b:a','192k','-movflags','+faststart',str(video)],stdout=log,stderr=subprocess.STDOUT,check=True)
+probe=subprocess.run([ffprobe,'-v','error','-count_frames','-show_streams','-show_format','-of','json',str(video)],capture_output=True,text=True,encoding='utf8',check=True);info=json.loads(probe.stdout);v=next(x for x in info['streams'] if x['codec_type']=='video');audio=next(x for x in info['streams'] if x['codec_type']=='audio');assert (v['width'],v['height'],v['r_frame_rate'],int(v['nb_read_frames']))==(1920,1080,'30/1',450);assert abs(float(v['duration'])-15)<.001 and abs(float(audio['duration'])-15)<.04
+with (out/'full_decode.log').open('w',encoding='utf8') as log:subprocess.run([ffmpeg,'-v','error','-i',str(video),'-f','null','NUL'],stdout=log,stderr=subprocess.STDOUT,check=True)
+assert not (out/'full_decode.log').read_text('utf8').strip()
+report=dict(status='NEW_FULL_HEAD_PHYSICS_VIDEO_1080P_30FPS_450_FRAMES_15S_FULL_DECODE_PASS',video=str(video),bytes=video.stat().st_size,sha256=hashlib.sha256(video.read_bytes()).hexdigest(),width=1920,height=1080,fps=30,decoded_video_frames=int(v['nb_read_frames']),video_seconds=float(v['duration']),audio_seconds=float(audio['duration']),video_codec=v['codec_name'],audio_codec=audio['codec_name'],music=a.music,audio_seek_seconds=.0666666667,fixed_camera=True,native_resolution=True,frame_interpolation=False,all_hair_body_contact_sampled_pass=True,all_hair_self_collision_solved=False,algorithm_fingerprint=pub['fingerprint']);(out/'video_report.json').write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf8');(out/'ffprobe.json').write_text(probe.stdout,encoding='utf8');(out/'frame_manifest.json').write_text(json.dumps(manifest,indent=2),encoding='utf8');print('NEW_VIDEO_FULLY_VERIFIED',json.dumps(report,ensure_ascii=False),flush=True)

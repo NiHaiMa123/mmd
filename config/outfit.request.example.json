@@ -1,0 +1,9 @@
+{
+  "action": "inspect",
+  "source": "assets/source.pmx",
+  "target": "assets/base.pmx",
+  "output_root": "outputs/outfit_jobs",
+  "preset": "conservative",
+  "render": false,
+  "timeout": 1800
+}

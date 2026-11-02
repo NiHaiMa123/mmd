@@ -1,0 +1,10 @@
+"""Collect verified limited backend evidence without claiming full MMD success."""
+import json
+from pathlib import Path
+ROOT=Path(__file__).resolve().parents[1];folder=ROOT/'outputs/contact_stack'
+def read(path):return json.loads((folder/path).read_text(encoding='utf-8'))
+live=read('live_joint_feedback_v2/comparison.json');multi=read('two_link_head_cloth_v2/surface_audit.json');hands=read('bimanual_v3/comparison.json');play=read('bimanual_v3/blender_playback_qa.json');video=read('bimanual_v3/video_report.json')
+checks={'raw_live_joint_feedback':live['status']=='PROBE_JOINT_FEEDBACK_AND_SAMPLED_SURFACES_PASS','two_joint_head_torso_moving_dual_cloth':multi['status']=='MULTI_LINK_PROXY_CASE_SAMPLED_PASS','bimanual_declared_persistent_contact':hands['status']=='BIMANUAL_CONTACT_CONTROLLED_PROXY_PASS','blender_six_bone_reload':play['max_blender_bone_error_after_reload_m']<2e-6,'native_1080p_full_video_decode':video['decode_verified'] and any(s.get('width')==1920 and s.get('height')==1080 for s in video['streams'])}
+report={'status':'LIMITED_CONTACT_REGRESSIONS_PASS_FULL_MMD_INCOMPLETE' if all(checks.values()) else 'CONTACT_REGRESSION_FAILURE','checks':checks,'full_mmd_accepted':False,'old_clasp_candidate_accepted':False,'current_addon_fit_button_uses_new_backend':False,'evidence':{'live':'live_joint_feedback_v2/comparison.json','head_cloth':'two_link_head_cloth_v2/surface_audit.json','hands':'bimanual_v3/comparison.json','blender':'bimanual_v3/blender_playback_qa.json','video':'bimanual_v3/video_report.json'},'remaining':['Real MMD multiaxis/floating skeleton and actual skin feedback','Intentional contact phase detection, entry, crossing order, release, rolling and fingers','Restore and visually accept actual character clasp','Complete garment initialization, calibrated friction and constrained-motion feasibility feedback','Full 15 second character and garment multiview and temporal validation']}
+(folder/'acceptance.json').write_text(json.dumps(report,indent=2),encoding='utf-8');print(json.dumps(report,indent=2))
+if not all(checks.values()):raise SystemExit(1)

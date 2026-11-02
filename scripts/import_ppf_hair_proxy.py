@@ -1,0 +1,34 @@
+"""Map native PPF physical-proxy motion to the original finite-width hair."""
+import argparse,json,sys,time
+from pathlib import Path
+import bpy,numpy as np
+ROOT=Path(__file__).resolve().parents[1];sys.path.insert(0,str(ROOT/'addon'))
+from mmd_outfit.service import engine
+from animation_contact_tools.surface import coords,regions,audit_frame
+from animation_contact_tools.mesh_hair_proxy import display_positions_world
+from animation_contact_tools.hair_bundle_profile import resolve_bundle
+from animation_contact_tools.hair_position_cache import bind_position_cache
+from animation_contact_tools.exact_skin_collider import build_exact_skin_topology
+from animation_contact_tools.closed_collider_field import ClosedColliderField
+p=argparse.ArgumentParser();p.add_argument('--input',required=True);p.add_argument('--binding-run',required=True);p.add_argument('--out',required=True);a=p.parse_args(sys.argv[sys.argv.index('--')+1:]);src=Path(a.input);out=Path(a.out);out.mkdir(parents=True,exist_ok=True)
+if (out/'report.json').exists():raise ValueError('Use a fresh playback directory')
+manifest=json.loads((src/'manifest.json').read_text('utf8'));status=json.loads((src/'solve_status.json').read_text('utf8'))
+if status['status']!='FINISHED' or status['contact_exemptions']!=0:raise ValueError('Complete native output with contacts enabled required')
+physical=np.load(src/'PPFCloth.npy');run=Path(a.binding_run);setup=json.loads((run/'setup.json').read_text('utf8'));config=setup['bundle'];profile=json.loads(Path(config['source_profile']).read_text('utf8'));profile['pairs']=[];origin=np.asarray(setup['simulation_origin_m']);scale=setup['simulation']['simulation_scale'];first,last=manifest['source_frames'];native_frames=np.linspace(first,last,len(physical));native_step=float(native_frames[1]-native_frames[0]);initial=np.load(ROOT.parent/'work/headswap_xl_codex/contact_repair_20261029/multi_bundle/left_rig_root_native/initial_projection.npz');engine('import_export').ensure_mmd_tools();bpy.ops.wm.open_mainfile(filepath=str(run/'SurfaceProxy_Live_Unbaked.blend'),load_ui=False,use_scripts=False);mesh=bpy.data.objects[profile['mesh']];arm=bpy.data.objects[profile['armature']];scene=bpy.context.scene;bundle=resolve_bundle(mesh,arm,regions(mesh,arm,profile),config);ids=bundle['ids'];np.testing.assert_array_equal(ids,initial['ids']);proxy=next(o for o in scene.objects if any(m.type=='CLOTH' for m in o.modifiers));display=next(o for o in scene.objects if 'HairProxy_SourceToDisplay' in o);anchor=bpy.data.objects['HairProxy_ScaledSimulationAnchor']
+if physical.shape[1:]!=(len(proxy.data.vertices),3):raise ValueError('Proxy topology differs from native output')
+for mod in proxy.modifiers:
+ if mod.type=='CLOTH':mod.show_viewport=False
+matrices=[]
+for frame in native_frames:
+ scene.frame_set(int(frame),subframe=frame%1);bpy.context.view_layer.update();matrices.append(np.array(anchor.matrix_world))
+proxy_cache=bind_position_cache(proxy,np.arange(len(proxy.data.vertices)),(physical-origin)*scale,out/'PPF_Proxy.pc2',first=first,anchor_object=anchor,anchor_matrices=matrices,sample_step=native_step)
+skin_ids,skin_faces,skin_meta=build_exact_skin_topology(mesh,arm,profile,triangulate=True);scene.frame_set(1);bpy.context.view_layer.update();head0=np.array(arm.matrix_world@arm.pose.bones[config['anchor_bone']].matrix);lookup={int(v):i for i,v in enumerate(ids)};edges=np.array([(lookup[e.vertices[0]],lookup[e.vertices[1]]) for e in mesh.data.edges if all(i in lookup for i in e.vertices)]);rest=initial['original'];length=np.linalg.norm(rest[edges[:,0]]-rest[edges[:,1]],axis=1);valid=length>.0005;hard=initial['pinned'];triangles=np.array([[lookup[i] for i in face] for face in bundle['faces']]);rows=[];positions=[];heads=[];start=time.monotonic()
+for k,frame in enumerate(np.arange(first,last+.001,.25)):
+ scene.frame_set(int(frame),subframe=frame%1);bpy.context.view_layer.update();mapped=display_positions_world(display)/scale+origin;head=np.array(arm.matrix_world@arm.pose.bones[config['anchor_bone']].matrix);delta=head@np.linalg.inv(head0);expected=initial['coordinates'][hard]@delta[:3,:3].T+delta[:3,3];raw_pin_error=float(np.max(np.linalg.norm(mapped[hard]-expected,axis=1)))
+ if raw_pin_error>.0001:raise ValueError('Display binding lost the true rigid roots')
+ mapped[hard]=expected;co=coords(mesh);field=ClosedColliderField(co[skin_ids],skin_faces);distance,_=field(mapped);proxy_distance,_=field(coords(proxy)/scale+origin);co[ids]=mapped;audit=audit_frame(mesh,arm,profile,bundle['parts'],hair=True,cap=1000000,coordinates_m=co);ratio=np.linalg.norm(mapped[edges[:,0]]-mapped[edges[:,1]],axis=1)[valid]/length[valid];positions.append(mapped.astype(np.float32));heads.append(head);row=dict(frame=float(frame),crossings=audit['ordinary_crossings'],min_edge_ratio=float(ratio.min()),max_edge_ratio=float(ratio.max()),display_min_signed_m=float(distance.min()),display_inside_points=int((distance<-.0001).sum()),proxy_min_signed_m=float(proxy_distance.min()),proxy_inside_points=int((proxy_distance<-.0001).sum()),raw_root_error_m=raw_pin_error);rows.append(row)
+ if k%8==0:print('PPF_HAIR_PLAYBACK',json.dumps(row),flush=True)
+positions=np.asarray(positions);heads=np.asarray(heads);np.savez_compressed(out/'dense_motion.npz',coordinates=positions,ids=ids,anchor_matrices=heads,rest_coordinates=rest,pinned=hard,edges=edges,triangles=triangles);cache=bind_position_cache(mesh,ids,positions,out/'PPF_DisplayHair.pc2',first=first,anchor_armature=arm,anchor_bone=config['anchor_bone'],anchor_matrices=heads,sample_step=.25)
+for obj in scene.objects:
+ if obj.name.startswith('HairProxy_'):obj.hide_set(True)
+scene.frame_start=first;scene.frame_end=last;scene.frame_set(245);candidate=out/'PPF_SurfaceProxy_Candidate_NotAccepted.blend';bpy.ops.wm.save_as_mainfile(filepath=str(candidate),compress=True);result=dict(status='PPF_DISPLAY_HAIR_REQUIRES_INDEPENDENT_VALIDATION',accepted=False,source=manifest['source_blend'],candidate=str(candidate),frames=[first,last],step_frames=.25,sample_count=len(rows),failed_collision_samples=sum(r['crossings']>0 for r in rows),failed_strain_samples=sum(r['min_edge_ratio']<.9 or r['max_edge_ratio']>1.1 for r in rows),failed_containment_samples=sum(r['display_inside_points']>0 for r in rows),min_edge_ratio=min(r['min_edge_ratio'] for r in rows),max_edge_ratio=max(r['max_edge_ratio'] for r in rows),samples=rows,setup=setup,cache=cache,proxy_cache=proxy_cache,skin_containment_proxy=skin_meta,native_solver_status=status,original_body_action_modified=False,all_hair_solved=False,ccd_proven_for_display_mesh=False,seconds=time.monotonic()-start);(out/'report.json').write_text(json.dumps(result,ensure_ascii=False,indent=2),encoding='utf8');print('PPF_HAIR_COMPLETE',json.dumps({k:v for k,v in result.items() if k not in ('samples','setup','cache','proxy_cache','skin_containment_proxy','native_solver_status')}),flush=True)
